@@ -29,9 +29,30 @@ jobs:
           ./frontend/package-lock.json
           ./frontend/package.json
 
-    - name: Install dependencies
+    - name: Configure npm
       working-directory: ./frontend
-      run: npm ci
+      run: |
+        npm config set fetch-retries 5
+        npm config set fetch-retry-factor 2
+        npm config set fetch-retry-mintimeout 10000
+        npm config set fetch-retry-maxtimeout 60000
+        npm config set prefer-offline true
+        npm config set audit false
+        npm config set fund false
+
+    - name: Install dependencies (with retry and fallback)
+      working-directory: ./frontend
+      run: |
+        set -e
+        for i in 1 2 3 4 5; do
+          if npm ci --no-audit --no-fund --prefer-offline; then
+            exit 0
+          fi
+          echo "npm ci failed (attempt $i), retrying in $((i*10))s..."
+          sleep $((i*10))
+        done
+        echo "npm ci still failing, trying mirror registry..."
+        npm ci --no-audit --no-fund --prefer-offline --registry=https://registry.npmmirror.com
 
     - name: Run linter
       working-directory: ./frontend
