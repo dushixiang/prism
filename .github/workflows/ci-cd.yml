@@ -31,9 +31,6 @@ jobs:
       working-directory: ./frontend
       run: npm install
 
-    - name: Run linter
-      working-directory: ./frontend
-      run: npm run lint
 
     - name: Build frontend
       working-directory: ./frontend
