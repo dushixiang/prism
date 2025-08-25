@@ -1,0 +1,75 @@
+# Git
+.git
+.gitignore
+README.md
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.dev.yaml
+docker-compose.yml
+
+# Documentation
+*.md
+docs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Data
+data/
+
+# Build artifacts
+bin/
+cmd/serv/serv
+frontend/dist/
+frontend/build/
+
+# Dependencies
+frontend/node_modules/
+frontend/.pnpm-store/
+
+# Development files
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Testing
+coverage/
+*.test
+*.out
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Go specific
+vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Frontend specific
+frontend/.vite/
+frontend/yarn-error.log
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
