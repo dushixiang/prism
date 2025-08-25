@@ -1,0 +1,27 @@
+database:
+  enabled: true
+  type: postgres
+  url: "postgres://prism:prism@localhost:5432/prism?sslmode=disable"
+  ShowSql: true
+log:
+  level: debug
+  filename: ./logs/app.log
+
+server:
+  addr: "0.0.0.0:8080"
+  IPExtractor: "x-forwarded-for"
+  tls:
+    enabled: false
+    auto: false
+    cert: ""
+    key: ""
+
+app:
+  telegram:
+    enabled: false
+  llm:
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key: "replace-with-your-api-key"
+    model:
+      default: "qwen-plus"
+      sentiment_analysis: "qwen-turbo"
