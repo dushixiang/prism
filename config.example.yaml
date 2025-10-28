@@ -19,12 +19,13 @@ app:
   binance:
     api_key: "replace-with-your-binance-api-key"
     secret: "replace-with-your-binance-secret-key"
-    proxy_url: "http://127.0.0.1:7890"
-    use_proxy: false
+    proxy_url: "" # 配置代理URL，为空则不使用代理
+    testnet: false # 是否使用测试网
   llm:
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
     api_key: "replace-with-your-api-key"
     model: "qwen3-max"
+    proxy_url: "" # 配置代理URL，为空则不使用代理
   trading:
     # 交易策略核心参数（后端不再提供自动止损/止盈，请在模型策略中自行执行风控）。
     symbols: [ "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT" ]  # 策略关注的交易对列表。
