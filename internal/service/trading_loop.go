@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -17,7 +16,6 @@ type TradingLoop struct {
 	marketService   *MarketService
 	accountService  *TradingAccountService
 	positionService *PositionService
-	riskService     *RiskService
 	promptService   *PromptService
 	agentService    *AgentService
 	logger          *zap.Logger
@@ -37,7 +35,6 @@ func NewTradingLoop(
 	marketService *MarketService,
 	accountService *TradingAccountService,
 	positionService *PositionService,
-	riskService *RiskService,
 	promptService *PromptService,
 	agentService *AgentService,
 	logger *zap.Logger,
@@ -47,7 +44,6 @@ func NewTradingLoop(
 		marketService:   marketService,
 		accountService:  accountService,
 		positionService: positionService,
-		riskService:     riskService,
 		promptService:   promptService,
 		agentService:    agentService,
 		logger:          logger,
@@ -92,11 +88,6 @@ func (t *TradingLoop) Start(ctx context.Context) error {
 	_, err := t.cron.AddFunc(cronExpr, func() {
 		if err := t.ExecuteCycle(context.Background()); err != nil {
 			t.logger.Error("cycle execution failed", zap.Error(err))
-			// 检查是否是致命错误
-			if errors.Is(err, ErrStopLossTriggered) || errors.Is(err, ErrMaxDrawdownTriggered) {
-				t.logger.Error("fatal error, stopping trading loop", zap.Error(err))
-				t.Stop()
-			}
 		}
 	})
 
@@ -161,99 +152,36 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 		zap.Time("start_time", cycleStart))
 
 	// ========== Step 1: 收集市场数据 ==========
-	t.logger.Info("[STEP 1/7] Collecting market data...")
+	t.logger.Info("[STEP 1/6] Collecting market data...")
 	marketData, err := t.marketService.CollectAllSymbols(ctx, t.config.Symbols)
 	if err != nil {
 		return fmt.Errorf("step 1 failed - collect market data: %w", err)
 	}
-	t.logger.Info("[STEP 1/7] Market data collected",
+	t.logger.Info("[STEP 1/6] Market data collected",
 		zap.Int("symbols_count", len(marketData)))
 
 	// ========== Step 2: 获取账户信息 ==========
-	t.logger.Info("[STEP 2/7] Getting account metrics...")
+	t.logger.Info("[STEP 2/6] Getting account metrics...")
 	accountMetrics, err := t.accountService.GetAccountMetrics(ctx)
 	if err != nil {
 		return fmt.Errorf("step 2 failed - get account metrics: %w", err)
 	}
-	t.logger.Info("[STEP 2/7] Account metrics retrieved",
+	t.logger.Info("[STEP 2/6] Account metrics retrieved",
 		zap.Float64("total_balance", accountMetrics.TotalBalance),
 		zap.Float64("return_percent", accountMetrics.ReturnPercent),
 		zap.Float64("drawdown_from_peak", accountMetrics.DrawdownFromPeak))
 
 	// ========== Step 3: 同步持仓数据 ==========
-	t.logger.Info("[STEP 3/7] Syncing positions...")
+	t.logger.Info("[STEP 3/6] Syncing positions...")
 	if err := t.positionService.SyncPositions(ctx); err != nil {
 		return fmt.Errorf("step 3 failed - sync positions: %w", err)
 	}
 	positions, _ := t.positionService.GetAllPositions(ctx)
-	t.logger.Info("[STEP 3/7] Positions synced",
+	t.logger.Info("[STEP 3/6] Positions synced",
 		zap.Int("position_count", len(positions)))
 
-	// ========== Step 4: 强制风控检查（最高优先级） ==========
-	t.logger.Info("[STEP 4/7] Performing risk control checks...")
-
-	// 4a. 检查账户止损线
-	if t.accountService.CheckStopLoss(accountMetrics, t.config.StopLossUSDT) {
-		t.logger.Error("[RISK] Account stop loss triggered",
-			zap.Float64("balance", accountMetrics.TotalBalance),
-			zap.Float64("stop_loss", t.config.StopLossUSDT))
-
-		if err := t.riskService.CloseAllPositions(ctx, "触发账户止损线"); err != nil {
-			t.logger.Error("failed to close all positions", zap.Error(err))
-		}
-		return ErrStopLossTriggered
-	}
-
-	// 4b. 检查账户止盈线
-	if t.accountService.CheckTakeProfit(accountMetrics, t.config.TakeProfitUSDT) {
-		t.logger.Info("[RISK] Account take profit triggered",
-			zap.Float64("balance", accountMetrics.TotalBalance),
-			zap.Float64("take_profit", t.config.TakeProfitUSDT))
-
-		if err := t.riskService.CloseAllPositions(ctx, "触发账户止盈线"); err != nil {
-			t.logger.Error("failed to close all positions", zap.Error(err))
-		}
-		return ErrTakeProfitTriggered
-	}
-
-	// 4c. 检查账户回撤保护
-	if accountMetrics.DrawdownFromPeak >= 20 {
-		t.logger.Error("[RISK] Maximum drawdown triggered (>=20%)",
-			zap.Float64("drawdown", accountMetrics.DrawdownFromPeak))
-
-		if err := t.riskService.CloseAllPositions(ctx, "回撤≥20%，触发强制平仓"); err != nil {
-			t.logger.Error("failed to close all positions", zap.Error(err))
-		}
-		return ErrMaxDrawdownTriggered
-	}
-
-	// 4d. 检查所有持仓的风控（36小时、动态止损、移动止盈、峰值回撤）
-	closedCount, err := t.riskService.CheckAllPositions(ctx)
-	if err != nil {
-		t.logger.Error("failed to check positions risk", zap.Error(err))
-	} else if closedCount > 0 {
-		t.logger.Info("[RISK] Force closed positions",
-			zap.Int("closed_count", closedCount))
-	}
-
-	t.logger.Info("[STEP 4/7] Risk control checks completed",
-		zap.Int("positions_closed", closedCount))
-
-	// 重新获取持仓（可能已被风控平仓）
-	positions, _ = t.positionService.GetAllPositions(ctx)
-
-	// 风控操作可能影响账户资金，刷新账户指标以避免后续使用过期数据
-	if refreshedMetrics, refreshErr := t.accountService.GetAccountMetrics(ctx); refreshErr != nil {
-		t.logger.Warn("failed to refresh account metrics after risk checks", zap.Error(refreshErr))
-	} else {
-		accountMetrics = refreshedMetrics
-		t.logger.Info("[STEP 4/7] Account metrics refreshed after risk controls",
-			zap.Float64("total_balance", accountMetrics.TotalBalance),
-			zap.Float64("drawdown_from_peak", accountMetrics.DrawdownFromPeak))
-	}
-
-	// ========== Step 5: 生成AI提示词 ==========
-	t.logger.Info("[STEP 5/7] Generating LLM prompt...")
+	// ========== Step 4: 生成AI提示词 ==========
+	t.logger.Info("[STEP 4/6] Generating LLM prompt...")
 
 	// 获取历史交易和决策
 	recentTrades, _ := t.agentService.GetRecentTrades(ctx, 10)
@@ -272,19 +200,19 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 	prompt := t.promptService.GeneratePrompt(ctx, promptData)
 	systemInstructions := t.promptService.GetSystemInstructions()
 
-	t.logger.Info("[STEP 5/7] LLM prompt generated",
+	t.logger.Info("[STEP 4/6] LLM prompt generated",
 		zap.Int("prompt_length", len(prompt)))
 
-	// ========== Step 6: LLM Agent决策 ==========
-	t.logger.Info("[STEP 6/7] Executing LLM decision...")
+	// ========== Step 5: LLM Agent决策 ==========
+	t.logger.Info("[STEP 5/6] Executing LLM decision...")
 
 	decision, err := t.agentService.ExecuteDecision(ctx, systemInstructions, prompt, accountMetrics)
 	if err != nil {
-		t.logger.Error("[STEP 6/7] LLM decision failed", zap.Error(err))
-		return fmt.Errorf("step 6 failed - LLM decision: %w", err)
+		t.logger.Error("[STEP 5/6] LLM decision failed", zap.Error(err))
+		return fmt.Errorf("step 5 failed - LLM decision: %w", err)
 	}
 
-	t.logger.Info("[STEP 6/7] LLM decision executed",
+	t.logger.Info("[STEP 5/6] LLM decision executed",
 		zap.Int("tools_called", decision.ToolsCalled),
 		zap.Int("prompt_tokens", decision.PromptTokens),
 		zap.Int("completion_tokens", decision.CompletionTokens),
@@ -296,30 +224,30 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 		t.logger.Error("failed to save decision", zap.Error(err))
 	}
 
-	// ========== Step 7: 执行后处理 ==========
-	t.logger.Info("[STEP 7/7] Performing post-processing...")
+	// ========== Step 6: 执行后处理 ==========
+	t.logger.Info("[STEP 6/6] Performing post-processing...")
 
-	// 7a. 重新同步持仓
+	// 6a. 重新同步持仓
 	if err := t.positionService.SyncPositions(ctx); err != nil {
 		t.logger.Error("failed to re-sync positions", zap.Error(err))
 	}
 
-	// 7b. 重新获取账户信息
+	// 6b. 重新获取账户信息
 	finalAccountMetrics, err := t.accountService.GetAccountMetrics(ctx)
 	if err != nil {
 		t.logger.Error("failed to get final account metrics", zap.Error(err))
 		finalAccountMetrics = accountMetrics
 	} else {
-		// 7c. 保存账户历史
+		// 6c. 保存账户历史
 		if err := t.accountService.SaveAccountHistory(ctx, finalAccountMetrics, t.iteration); err != nil {
 			t.logger.Error("failed to save account history", zap.Error(err))
 		}
 	}
 
-	// 7d. 获取最终持仓
+	// 6d. 获取最终持仓
 	finalPositions, _ := t.positionService.GetAllPositions(ctx)
 
-	t.logger.Info("[STEP 7/7] Post-processing completed")
+	t.logger.Info("[STEP 6/6] Post-processing completed")
 
 	// ========== 周期总结 ==========
 	cycleDuration := time.Since(cycleStart)
@@ -372,10 +300,3 @@ func truncateString(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "..."
 }
-
-// 错误定义
-var (
-	ErrStopLossTriggered    = fmt.Errorf("account stop loss triggered")
-	ErrTakeProfitTriggered  = fmt.Errorf("account take profit triggered")
-	ErrMaxDrawdownTriggered = fmt.Errorf("maximum drawdown triggered (>=20%%)")
-)

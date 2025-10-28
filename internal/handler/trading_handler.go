@@ -16,7 +16,6 @@ type TradingHandler struct {
 	accountService  *service.TradingAccountService
 	positionService *service.PositionService
 	agentService    *service.AgentService
-	riskService     *service.RiskService
 	logger          *zap.Logger
 	loopCtx         context.Context
 	loopCancel      context.CancelFunc
@@ -28,7 +27,6 @@ func NewTradingHandler(
 	accountService *service.TradingAccountService,
 	positionService *service.PositionService,
 	agentService *service.AgentService,
-	riskService *service.RiskService,
 	logger *zap.Logger,
 ) *TradingHandler {
 	return &TradingHandler{
@@ -36,7 +34,6 @@ func NewTradingHandler(
 		accountService:  accountService,
 		positionService: positionService,
 		agentService:    agentService,
-		riskService:     riskService,
 		logger:          logger,
 	}
 }
@@ -232,15 +229,15 @@ func (h *TradingHandler) GetEquityCurve(c echo.Context) error {
 	data := make([]map[string]interface{}, 0, len(histories))
 	for _, h := range histories {
 		data = append(data, map[string]interface{}{
-			"timestamp":            h.RecordedAt.Unix() * 1000, // 转换为毫秒时间戳
-			"time":                 h.RecordedAt,
-			"total_balance":        h.TotalBalance,
-			"available":            h.Available,
-			"unrealised_pnl":       h.UnrealisedPnl,
-			"return_percent":       h.ReturnPercent,
-			"drawdown_from_peak":   h.DrawdownFromPeak,
+			"timestamp":             h.RecordedAt.Unix() * 1000, // 转换为毫秒时间戳
+			"time":                  h.RecordedAt,
+			"total_balance":         h.TotalBalance,
+			"available":             h.Available,
+			"unrealised_pnl":        h.UnrealisedPnl,
+			"return_percent":        h.ReturnPercent,
+			"drawdown_from_peak":    h.DrawdownFromPeak,
 			"drawdown_from_initial": h.DrawdownFromInitial,
-			"iteration":            h.Iteration,
+			"iteration":             h.Iteration,
 		})
 	}
 
@@ -295,38 +292,6 @@ func (h *TradingHandler) Stop(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message": "trading loop stopped",
-	})
-}
-
-// ForceCloseAll 强制平仓所有持仓
-// POST /api/trading/force-close
-func (h *TradingHandler) ForceCloseAll(c echo.Context) error {
-	ctx := c.Request().Context()
-
-	var req struct {
-		Reason string `json:"reason"`
-	}
-
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]interface{}{
-			"error": "invalid request",
-		})
-	}
-
-	if req.Reason == "" {
-		req.Reason = "手动强制平仓"
-	}
-
-	if err := h.riskService.CloseAllPositions(ctx, req.Reason); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
-			"error": err.Error(),
-		})
-	}
-
-	h.logger.Info("force closed all positions via API", zap.String("reason", req.Reason))
-
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"message": "all positions closed",
 	})
 }
 

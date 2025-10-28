@@ -51,7 +51,6 @@ type AppComponents struct {
 	MarketService         *service.MarketService
 	TradingAccountService *service.TradingAccountService
 	PositionService       *service.PositionService
-	RiskService           *service.RiskService
 	AgentService          *service.AgentService
 
 	tg *telegram.Telegram

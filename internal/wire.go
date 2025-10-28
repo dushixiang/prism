@@ -41,7 +41,6 @@ var (
 		service.NewMarketService,
 		service.NewTradingAccountService,
 		service.NewPositionService,
-		service.NewRiskService,
 		service.NewPromptService,
 		service.NewAgentService,
 		service.NewTradingLoop,

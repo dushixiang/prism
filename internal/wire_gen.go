@@ -31,12 +31,11 @@ func InitializeApp(logger *zap.Logger, db *gorm.DB, conf *config.Config) (*AppCo
 	marketService := service.NewMarketService(db, binanceClient, indicatorService, logger)
 	tradingAccountService := service.NewTradingAccountService(db, binanceClient, logger)
 	positionService := service.NewPositionService(db, binanceClient, logger)
-	riskService := service.NewRiskService(binanceClient, positionService, logger)
 	promptService := service.NewPromptService(db, conf)
 	client := provideOpenAIClient(conf, logger)
-	agentService := service.NewAgentService(db, client, binanceClient, riskService, positionService, logger, conf)
-	tradingLoop := service.NewTradingLoop(conf, marketService, tradingAccountService, positionService, riskService, promptService, agentService, logger)
-	tradingHandler := handler.NewTradingHandler(tradingLoop, tradingAccountService, positionService, agentService, riskService, logger)
+	agentService := service.NewAgentService(db, client, binanceClient, positionService, logger, conf)
+	tradingLoop := service.NewTradingLoop(conf, marketService, tradingAccountService, positionService, promptService, agentService, logger)
+	tradingHandler := handler.NewTradingHandler(tradingLoop, tradingAccountService, positionService, agentService, logger)
 	telegram := provideTelegram(logger, conf)
 	appComponents := &AppComponents{
 		TradingHandler:        tradingHandler,
@@ -44,7 +43,6 @@ func InitializeApp(logger *zap.Logger, db *gorm.DB, conf *config.Config) (*AppCo
 		MarketService:         marketService,
 		TradingAccountService: tradingAccountService,
 		PositionService:       positionService,
-		RiskService:           riskService,
 		AgentService:          agentService,
 		tg:                    telegram,
 	}
@@ -65,7 +63,7 @@ var (
 
 	tradingSet = wire.NewSet(
 		provideBinanceClient,
-		provideOpenAIClient, service.NewIndicatorService, service.NewMarketService, service.NewPositionService, service.NewRiskService, service.NewPromptService, service.NewAgentService, service.NewTradingLoop,
+		provideOpenAIClient, service.NewIndicatorService, service.NewMarketService, service.NewPositionService, service.NewPromptService, service.NewAgentService, service.NewTradingLoop,
 	)
 )
 

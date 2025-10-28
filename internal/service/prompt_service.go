@@ -154,6 +154,8 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 		return
 	}
 
+	tc := s.config.Trading
+
 	sb.WriteString(fmt.Sprintf("- 初始账户净值: $%.2f\n", metrics.InitialBalance))
 	sb.WriteString(fmt.Sprintf("- 峰值账户净值: $%.2f\n", metrics.PeakBalance))
 	sb.WriteString(fmt.Sprintf("- 当前账户价值: $%.2f\n", metrics.TotalBalance))
@@ -163,17 +165,22 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 	sb.WriteString(fmt.Sprintf("- 可用资金: $%.2f\n", metrics.Available))
 	sb.WriteString(fmt.Sprintf("- 未实现盈亏: $%.2f\n\n", metrics.UnrealisedPnl))
 
-	maxDrawdown := s.config.Trading.MaxDrawdownPercent
-	forcedFlat := maxDrawdown + 5
+	sb.WriteString("### 自主管理提醒\n")
+	sb.WriteString("- 后端不会自动触发止损、止盈或强制平仓，请根据纪律自行调用工具执行。\n")
 
-	sb.WriteString("### 风险提示\n")
-	switch {
-	case metrics.DrawdownFromPeak >= forcedFlat:
-		sb.WriteString(fmt.Sprintf("- 当前回撤 %.2f%% ≥ %.2f%%：需立即平掉全部持仓并进入观望。\n", metrics.DrawdownFromPeak, forcedFlat))
-	case metrics.DrawdownFromPeak >= maxDrawdown:
-		sb.WriteString(fmt.Sprintf("- 当前回撤 %.2f%% ≥ %.2f%%：暂停新开仓，优先处理现有风险。\n", metrics.DrawdownFromPeak, maxDrawdown))
-	default:
-		sb.WriteString("- 当前回撤低于配置阈值，可继续评估交易机会。\n")
+	maxDrawdown := tc.MaxDrawdownPercent
+	if maxDrawdown > 0 {
+		forcedFlat := maxDrawdown + 5
+		switch {
+		case metrics.DrawdownFromPeak >= forcedFlat:
+			sb.WriteString(fmt.Sprintf("- 回撤已达 %.2f%%（高于参考强平线 %.2f%%），必须制定并执行全仓退出计划。\n", metrics.DrawdownFromPeak, forcedFlat))
+		case metrics.DrawdownFromPeak >= maxDrawdown:
+			sb.WriteString(fmt.Sprintf("- 回撤 %.2f%% ≥ 参考阈值 %.2f%%，暂停新开仓，先处理存量风险。\n", metrics.DrawdownFromPeak, maxDrawdown))
+		default:
+			sb.WriteString(fmt.Sprintf("- 回撤 %.2f%% 低于参考阈值 %.2f%%，可继续谨慎评估机会。\n", metrics.DrawdownFromPeak, maxDrawdown))
+		}
+	} else {
+		sb.WriteString("- 配置未提供回撤阈值，请自行定义并严格执行风控纪律。\n")
 	}
 	sb.WriteString("\n")
 }
@@ -205,15 +212,20 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 		sb.WriteString(fmt.Sprintf("- 当前价: $%.2f\n", pos.CurrentPrice))
 		sb.WriteString(fmt.Sprintf("- 开仓时间: %s\n", pos.OpenedAt.Format("2006-01-02 15:04:05")))
 		sb.WriteString(fmt.Sprintf("- 已持仓: %.1f 小时 / %d 个周期\n", holdingHours, holdingCycles))
-		sb.WriteString(fmt.Sprintf("- 距离%d小时持仓上限剩余: %.1f 小时\n", maxHoldingHours, remainingHours))
-
-		if remainingHours <= 0 {
-			sb.WriteString("- 时间提示：已超过持仓上限，需立即处理。\n")
-		} else if remainingHours < 2 {
-			sb.WriteString("- 时间提示：不足2小时到达持仓上限，请优先评估退出方案。\n")
-		} else if remainingHours < 4 {
-			sb.WriteString("- 时间提示：距离持仓上限不足4小时，请开始规划退出。\n")
+		if maxHoldingHours > 0 {
+			sb.WriteString(fmt.Sprintf("- 距离参考持仓上限（%d 小时）剩余: %.1f 小时\n", maxHoldingHours, remainingHours))
 		}
+
+		if maxHoldingHours > 0 {
+			if remainingHours <= 0 {
+				sb.WriteString("- 时间提示：已超过参考持仓上限，必须制定并执行退出方案。\n")
+			} else if remainingHours < 2 {
+				sb.WriteString("- 时间提示：不足2小时到达参考持仓上限，请优先评估退出方案。\n")
+			} else if remainingHours < 4 {
+				sb.WriteString("- 时间提示：距离参考持仓上限不足4小时，请开始规划退出。\n")
+			}
+		}
+		sb.WriteString("- 执行提示：若计划平仓，请在行动方案中明确调用 `closePosition` 并说明触发条件。\n")
 		sb.WriteString("\n")
 	}
 }

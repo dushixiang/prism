@@ -44,45 +44,87 @@ func (s *PositionService) SyncPositions(ctx context.Context) error {
 
 	s.logger.Info("syncing positions", zap.Int("count", len(positions)))
 
+	// 提前加载本地持仓，便于保留开仓时间、止盈止损等信息
+	existingPositions, err := s.PositionRepo.FindAll(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load existing positions: %w", err)
+	}
+
+	existingMap := make(map[string]*models.Position, len(existingPositions))
+	for i := range existingPositions {
+		pos := &existingPositions[i]
+		key := fmt.Sprintf("%s|%s", pos.Symbol, pos.Side)
+		existingMap[key] = pos
+	}
+
 	return s.Transaction(ctx, func(ctx context.Context) error {
-		// 清除所有现有持仓
-		if err := s.PositionRepo.DeleteAll(ctx); err != nil {
-			return fmt.Errorf("failed to delete existing positions: %w", err)
+		seen := make(map[string]struct{}, len(positions))
+
+		// 更新或新增持仓
+		for _, p := range positions {
+			// 计算保证金
+			margin := 0.0
+			if p.Leverage != 0 {
+				margin = p.EntryPrice * p.PositionAmount / float64(p.Leverage)
+			}
+			if margin < 0 {
+				margin = -margin
+			}
+
+			key := fmt.Sprintf("%s|%s", p.Symbol, p.Side)
+			if existingPos, ok := existingMap[key]; ok {
+				existingPos.Quantity = p.PositionAmount
+				existingPos.EntryPrice = p.EntryPrice
+				existingPos.CurrentPrice = p.MarkPrice
+				existingPos.LiquidationPrice = p.LiquidationPrice
+				existingPos.UnrealizedPnl = p.UnrealizedProfit
+				existingPos.Leverage = p.Leverage
+				existingPos.Margin = margin
+
+				// 更新峰值收益
+				if pnlPercent := existingPos.CalculatePnlPercent(); pnlPercent > existingPos.PeakPnlPercent {
+					existingPos.PeakPnlPercent = pnlPercent
+				}
+
+				if err := s.PositionRepo.Save(ctx, existingPos); err != nil {
+					return fmt.Errorf("failed to update position %s %s: %w", p.Symbol, p.Side, err)
+				}
+			} else {
+				position := &models.Position{
+					ID:               ulid.Make().String(),
+					Symbol:           p.Symbol,
+					Side:             p.Side,
+					Quantity:         p.PositionAmount,
+					EntryPrice:       p.EntryPrice,
+					CurrentPrice:     p.MarkPrice,
+					LiquidationPrice: p.LiquidationPrice,
+					UnrealizedPnl:    p.UnrealizedProfit,
+					Leverage:         p.Leverage,
+					Margin:           margin,
+					OpenedAt:         time.Now(),
+				}
+
+				// 新建持仓的初始峰值以当前值为基准
+				if pnlPercent := position.CalculatePnlPercent(); pnlPercent > 0 {
+					position.PeakPnlPercent = pnlPercent
+				}
+
+				if err := s.PositionRepo.Create(ctx, position); err != nil {
+					return fmt.Errorf("failed to create position: %w", err)
+				}
+
+				existingMap[key] = position
+			}
+
+			seen[key] = struct{}{}
 		}
 
-		// 插入新的持仓
-		for _, p := range positions {
-			// 检查是否已存在该持仓的记录（用于保留开仓时间等元数据）
-			existingPos, err := s.PositionRepo.FindBySymbolAndSide(ctx, p.Symbol, p.Side)
-
-			// 计算保证金
-			margin := p.EntryPrice * p.PositionAmount / float64(p.Leverage)
-
-			position := &models.Position{
-				ID:               ulid.Make().String(),
-				Symbol:           p.Symbol,
-				Side:             p.Side,
-				Quantity:         p.PositionAmount,
-				EntryPrice:       p.EntryPrice,
-				CurrentPrice:     p.MarkPrice,
-				LiquidationPrice: p.LiquidationPrice,
-				UnrealizedPnl:    p.UnrealizedProfit,
-				Leverage:         p.Leverage,
-				Margin:           margin,
-				OpenedAt:         time.Now(),
-			}
-
-			// 如果找到旧记录，保留某些字段
-			if err == nil {
-				position.OpenedAt = existingPos.OpenedAt
-				position.OrderID = existingPos.OrderID
-				position.StopLoss = existingPos.StopLoss
-				position.TakeProfit = existingPos.TakeProfit
-				position.PeakPnlPercent = existingPos.PeakPnlPercent
-			}
-
-			if err := s.PositionRepo.Create(ctx, position); err != nil {
-				return fmt.Errorf("failed to create position: %w", err)
+		// 删除已经不存在的持仓
+		for key, pos := range existingMap {
+			if _, ok := seen[key]; !ok {
+				if err := s.PositionRepo.DeleteById(ctx, pos.ID); err != nil {
+					return fmt.Errorf("failed to delete stale position %s %s: %w", pos.Symbol, pos.Side, err)
+				}
 			}
 		}
 

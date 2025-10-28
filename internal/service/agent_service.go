@@ -7,13 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/adshao/go-binance/v2/futures"
 	"github.com/dushixiang/prism/internal/config"
 	"github.com/dushixiang/prism/internal/models"
 	"github.com/dushixiang/prism/internal/repo"
 	"github.com/dushixiang/prism/pkg/exchange"
 	"github.com/go-orz/orz"
 	"github.com/oklog/ulid/v2"
-	openai "github.com/openai/openai-go"
+	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/shared"
 	"github.com/openai/openai-go/shared/constant"
 	"go.uber.org/zap"
@@ -30,8 +31,8 @@ type AgentService struct {
 
 	openAIClient    *openai.Client
 	binanceClient   *exchange.BinanceClient
-	riskService     *RiskService
 	positionService *PositionService
+	tradingConf     config.TradingConf
 	model           string
 }
 
@@ -40,7 +41,6 @@ func NewAgentService(
 	db *gorm.DB,
 	openAIClient *openai.Client,
 	binanceClient *exchange.BinanceClient,
-	riskService *RiskService,
 	positionService *PositionService,
 	logger *zap.Logger,
 	conf *config.Config,
@@ -52,8 +52,8 @@ func NewAgentService(
 		DecisionRepo:    repo.NewDecisionRepo(db),
 		openAIClient:    openAIClient,
 		binanceClient:   binanceClient,
-		riskService:     riskService,
 		positionService: positionService,
+		tradingConf:     conf.Trading,
 		model:           conf.LLM.Model,
 	}
 }
@@ -412,12 +412,13 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 	}
 
 	// 验证杠杆
-	if !s.riskService.ValidateLeverage(leverage) {
-		return nil, fmt.Errorf("invalid leverage: %d (must be 5-15)", leverage)
+	if !s.validateLeverage(leverage) {
+		minLeverage, maxLeverage := s.leverageBounds()
+		return nil, fmt.Errorf("invalid leverage: %d (allowed range %d-%d)", leverage, minLeverage, maxLeverage)
 	}
 
 	// 设置杠杆
-	if err := s.riskService.SetupPositionLeverage(ctx, symbol, leverage); err != nil {
+	if err := s.setupPositionLeverage(ctx, symbol, leverage); err != nil {
 		return nil, fmt.Errorf("failed to setup leverage: %w", err)
 	}
 
@@ -479,6 +480,11 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 
 	if err := s.TradeRepo.Create(ctx, trade); err != nil {
 		s.logger.Error("failed to save trade", zap.Error(err))
+	}
+
+	// 同步本地持仓，保证前端能立即看到最新仓位
+	if err := s.positionService.SyncPositions(ctx); err != nil {
+		s.logger.Warn("failed to sync positions after opening position", zap.Error(err))
 	}
 
 	return map[string]interface{}{
@@ -578,6 +584,11 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 		s.logger.Error("failed to delete position", zap.Error(err))
 	}
 
+	// 再次同步，确保剩余仓位状态统一
+	if err := s.positionService.SyncPositions(ctx); err != nil {
+		s.logger.Warn("failed to sync positions after closing position", zap.Error(err))
+	}
+
 	return map[string]interface{}{
 		"success":  true,
 		"order_id": order.OrderID,
@@ -602,10 +613,10 @@ func (s *AgentService) toolCalculateRisk(ctx context.Context, args map[string]in
 	accountValue := accountInfo.TotalBalance - accountInfo.UnrealizedPnl
 
 	// 计算仓位大小
-	positionSize := s.riskService.CalculatePositionSize(accountValue, riskPercent, leverage, 0)
+	positionSize := s.calculatePositionSize(accountValue, riskPercent, leverage, 0)
 
 	// 计算止损百分比
-	stopLossPercent := float64(s.riskService.getStopLossPercent(leverage))
+	stopLossPercent := s.stopLossPercentForLeverage(leverage)
 
 	// 确保仓位大小至少为 5 USDT
 	if positionSize < 5 {
@@ -625,6 +636,88 @@ func (s *AgentService) toolCalculateRisk(ctx context.Context, args map[string]in
 		"recommendation":      fmt.Sprintf("建议使用保证金 %.2f USDT，杠杆 %dx，实际开仓价值 %.2f USDT", positionSize, leverage, notionalValue),
 		"usage_instruction":   fmt.Sprintf("请将 position_size_usdt (%.2f) 作为 openPosition 的 quantity 参数", positionSize),
 	}, nil
+}
+
+func (s *AgentService) leverageBounds() (int, int) {
+	minLeverage := s.tradingConf.MinLeverage
+	maxLeverage := s.tradingConf.MaxLeverage
+
+	if minLeverage <= 0 {
+		minLeverage = 1
+	}
+	if maxLeverage <= 0 {
+		maxLeverage = 125
+	}
+	if maxLeverage < minLeverage {
+		maxLeverage = minLeverage
+	}
+
+	return minLeverage, maxLeverage
+}
+
+func (s *AgentService) validateLeverage(leverage int) bool {
+	minLeverage, maxLeverage := s.leverageBounds()
+	return leverage >= minLeverage && leverage <= maxLeverage
+}
+
+func (s *AgentService) setupPositionLeverage(ctx context.Context, symbol string, leverage int) error {
+	if !s.validateLeverage(leverage) {
+		minLeverage, maxLeverage := s.leverageBounds()
+		return fmt.Errorf("leverage %d out of allowed range %d-%d", leverage, minLeverage, maxLeverage)
+	}
+
+	if err := s.binanceClient.SetMarginType(ctx, symbol, futures.MarginTypeIsolated); err != nil {
+		errMsg := err.Error()
+		if !strings.Contains(errMsg, "code=-4046") && !strings.Contains(errMsg, "No need to change margin type") {
+			return fmt.Errorf("failed to set margin type: %w", err)
+		}
+	}
+
+	if err := s.binanceClient.SetLeverage(ctx, symbol, leverage); err != nil {
+		return fmt.Errorf("failed to set leverage: %w", err)
+	}
+
+	return nil
+}
+
+func (s *AgentService) stopLossPercentForLeverage(leverage int) float64 {
+	if leverage <= 0 {
+		return -5.0
+	}
+
+	switch {
+	case leverage >= 12:
+		return -3.0
+	case leverage >= 8:
+		return -4.0
+	default:
+		return -5.0
+	}
+}
+
+func (s *AgentService) calculatePositionSize(accountValue float64, riskPercent float64, leverage int, stopLossPercent float64) float64 {
+	if leverage <= 0 {
+		return 0
+	}
+
+	if stopLossPercent == 0 {
+		stopLossPercent = s.stopLossPercentForLeverage(leverage)
+	}
+
+	if stopLossPercent == 0 {
+		return 0
+	}
+
+	if stopLossPercent < 0 {
+		stopLossPercent = -stopLossPercent
+	}
+
+	riskAmount := accountValue * riskPercent / 100
+	if stopLossPercent == 0 {
+		return 0
+	}
+
+	return riskAmount / (stopLossPercent / 100 * float64(leverage))
 }
 
 // SaveDecision 保存AI决策记录

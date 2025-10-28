@@ -438,14 +438,15 @@ const Dashboard = () => {
 
     // 计算统计数据
     const stats = useMemo(() => {
-        const closedTrades = tradesData?.trades?.filter(t => t.type.toLowerCase() === 'close') ?? [];
+        const trades = tradesData?.trades ?? [];
+        const closedTrades = trades.filter(t => t.type.toLowerCase() === 'close');
         const winningTrades = closedTrades.filter(t => t.pnl > 0);
         const losingTrades = closedTrades.filter(t => t.pnl < 0);
         const winRate = closedTrades.length > 0 ? (winningTrades.length / closedTrades.length) * 100 : 0;
         const totalPnl = closedTrades.reduce((sum, t) => sum + t.pnl, 0);
 
         return {
-            totalTrades: closedTrades.length,
+            totalTrades: trades.length,
             winningTrades: winningTrades.length,
             losingTrades: losingTrades.length,
             winRate,
