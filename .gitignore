@@ -1,0 +1,12 @@
+.idea
+data/
+logs/
+frontend/node_modules/
+frontend/dist/
+config.yaml
+config.json
+*.db
+*.sqlite
+.DS_Store
+bin/
+tmp/

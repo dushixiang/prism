@@ -1,0 +1,39 @@
+database:
+  enabled: true
+  type: postgres
+  url: "postgres://prism:prism@localhost:5432/prism?sslmode=disable"
+  ShowSql: true
+log:
+  level: debug
+  filename: ./logs/app.log
+
+server:
+  addr: "0.0.0.0:8080"
+  IPExtractor: "x-forwarded-for"
+
+app:
+  telegram:
+    enabled: false
+    token: "replace-with-your-telegram-bot-token"
+    chat_id: "replace-with-your-telegram-chat-id"
+  binance:
+    api_key: "replace-with-your-binance-api-key"
+    secret: "replace-with-your-binance-secret-key"
+    proxy_url: "http://127.0.0.1:7890"
+    use_proxy: false
+  llm:
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key: "replace-with-your-api-key"
+    model: "qwen3-max"
+  trading:
+    # 交易策略相关的核心参数，用于控制建仓、持仓与平仓。
+    symbols: [ "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT" ]  # 策略关注的交易对列表。
+    interval_minutes: 5  # 策略重新评估与下单的最小时间间隔（分钟）。
+    stop_loss_usdt: 80  # 单笔持仓的止损金额（以 USDT 表示）。
+    take_profit_usdt: 200  # 单笔持仓的止盈金额（以 USDT 表示）。
+    max_drawdown_percent: 15  # 策略允许的最大回撤百分比，超出时停止新开仓。
+    max_holding_hours: 36  # 单笔持仓允许的最长持有时长（小时）。
+    max_positions: 5  # 同时持有的最大仓位数量。
+    max_leverage: 15  # 建仓使用的最高杠杆倍数。
+    min_leverage: 3  # 建仓使用的最低杠杆倍数。
+    risk_percent_per_trade: 3  # 单笔交易愿意承担的账户风险百分比。
