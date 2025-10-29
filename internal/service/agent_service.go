@@ -224,6 +224,11 @@ func (s *AgentService) formatToolCall(functionName string, args map[string]inter
 
 	case "closePosition":
 		symbol, _ := args["symbol"].(string)
+		reason, _ := args["reason"].(string)
+		reason = strings.TrimSpace(reason)
+		if reason != "" {
+			return fmt.Sprintf("平仓 %s（理由：%s）", symbol, reason)
+		}
 		return fmt.Sprintf("平仓 %s", symbol)
 
 	default:
@@ -510,7 +515,16 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 // toolClosePosition 平仓
 func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
 	symbol, _ := args["symbol"].(string)
+	symbol = strings.TrimSpace(symbol)
 	reason, _ := args["reason"].(string)
+	reason = strings.TrimSpace(reason)
+
+	if symbol == "" {
+		return nil, fmt.Errorf("symbol is required")
+	}
+	if reason == "" {
+		return nil, fmt.Errorf("平仓理由 reason 不能为空，请说明触发的具体条件")
+	}
 
 	s.logger.Info("closing position",
 		zap.String("symbol", symbol),
@@ -532,6 +546,31 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 
 	if targetPosition == nil {
 		return nil, fmt.Errorf("no position found for symbol %s", symbol)
+	}
+
+	holdingHours := targetPosition.CalculateHoldingHours()
+	if holdingHours < 1.0 {
+		lowerReason := strings.ToLower(reason)
+		criticalKeywords := []string{"止损", "结构", "破坏", "超时", "亏损", "目标完成", "基本面", "追踪止损", "stop", "loss", "break", "timeout", "target"}
+
+		matched := false
+		for _, kw := range criticalKeywords {
+			if strings.Contains(lowerReason, strings.ToLower(kw)) {
+				matched = true
+				break
+			}
+		}
+
+		if !matched && targetPosition.ExitPlan != "" {
+			// 允许理由引用退出计划中的关键字
+			if strings.Contains(reason, targetPosition.ExitPlan) {
+				matched = true
+			}
+		}
+
+		if !matched {
+			return nil, fmt.Errorf("当前持仓仅持有 %.1f 小时，未满 1 小时仅在触发止损/结构破坏/超时等硬性条件时可平仓，请在 reason 中明确说明触发原因", holdingHours)
+		}
 	}
 
 	// 获取当前价格用于记录
@@ -602,7 +641,8 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 		"order_id": order.OrderID,
 		"symbol":   symbol,
 		"pnl":      pnl,
-		"message":  fmt.Sprintf("成功平仓 %s，盈亏 $%.2f", symbol, pnl),
+		"reason":   reason,
+		"message":  fmt.Sprintf("成功平仓 %s，原因：%s，盈亏 $%.2f", symbol, reason, pnl),
 	}, nil
 }
 
