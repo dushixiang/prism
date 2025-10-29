@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dushixiang/prism/internal/models"
@@ -23,6 +24,11 @@ type PositionService struct {
 	*repo.PositionRepo
 
 	binanceClient *exchange.BinanceClient
+
+	// 后台同步相关
+	syncMutex sync.Mutex // 防止并发同步
+	stopChan  chan struct{}
+	stopped   bool
 }
 
 // NewPositionService 创建持仓服务
@@ -37,6 +43,10 @@ func NewPositionService(db *gorm.DB, binanceClient *exchange.BinanceClient, logg
 
 // SyncPositions 同步持仓数据
 func (s *PositionService) SyncPositions(ctx context.Context) error {
+	// 使用互斥锁避免并发同步
+	s.syncMutex.Lock()
+	defer s.syncMutex.Unlock()
+
 	// 从Binance获取实时持仓
 	positions, err := s.binanceClient.GetPositions(ctx)
 	if err != nil {
@@ -223,4 +233,46 @@ func (s *PositionService) GetPositionWarnings(position *models.Position) []strin
 	}
 
 	return warnings
+}
+
+// StartSyncWorker 启动后台持仓同步worker
+func (s *PositionService) StartSyncWorker(ctx context.Context, interval time.Duration) {
+	s.stopChan = make(chan struct{})
+	s.stopped = false
+
+	s.logger.Info("starting position sync worker", zap.Duration("interval", interval))
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		// 立即执行一次同步
+		if err := s.SyncPositions(ctx); err != nil {
+			s.logger.Error("failed to sync positions on startup", zap.Error(err))
+		}
+
+		for {
+			select {
+			case <-ticker.C:
+				if err := s.SyncPositions(ctx); err != nil {
+					s.logger.Error("failed to sync positions", zap.Error(err))
+				}
+			case <-s.stopChan:
+				s.logger.Info("position sync worker stopped")
+				return
+			case <-ctx.Done():
+				s.logger.Info("position sync worker stopped by context")
+				return
+			}
+		}
+	}()
+}
+
+// StopSyncWorker 停止后台持仓同步worker
+func (s *PositionService) StopSyncWorker() {
+	if !s.stopped && s.stopChan != nil {
+		close(s.stopChan)
+		s.stopped = true
+		s.logger.Info("position sync worker stop signal sent")
+	}
 }

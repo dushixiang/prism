@@ -33,13 +33,12 @@ func NewPromptService(db *gorm.DB, conf *config.Config) *PromptService {
 
 // PromptData 提示词数据
 type PromptData struct {
-	StartTime       time.Time
-	Iteration       int
-	AccountMetrics  *AccountMetrics
-	MarketDataMap   map[string]*MarketData
-	Positions       []*models.Position
-	RecentTrades    []*models.Trade
-	RecentDecisions []*models.Decision
+	StartTime      time.Time
+	Iteration      int
+	AccountMetrics *AccountMetrics
+	MarketDataMap  map[string]*MarketData
+	Positions      []*models.Position
+	RecentTrades   []*models.Trade
 }
 
 // GeneratePrompt 生成完整的AI提示词
@@ -59,8 +58,6 @@ func (s *PromptService) GeneratePrompt(ctx context.Context, data *PromptData) st
 	s.writePositionInfo(&sb, data.Positions)
 
 	s.writeTradeHistory(&sb, data.RecentTrades)
-
-	s.writeDecisionHistory(&sb, data.RecentDecisions)
 
 	return sb.String()
 }

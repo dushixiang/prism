@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/dushixiang/prism/internal/config"
 	"github.com/dushixiang/prism/internal/handler"
@@ -157,6 +158,12 @@ func (r *PrismApp) Init(logger *zap.Logger) error {
 
 	if components.TradingLoop == nil {
 		return fmt.Errorf("trading loop not available, please check Binance and LLM API configuration")
+	}
+
+	// 启动持仓同步worker（每3秒同步一次，保证数据实时性）
+	if components.PositionService != nil {
+		logger.Info("Starting position sync worker...")
+		components.PositionService.StartSyncWorker(context.Background(), 3*time.Second)
 	}
 
 	logger.Info("Trading loop initialized, starting...")

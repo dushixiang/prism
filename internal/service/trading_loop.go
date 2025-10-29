@@ -176,18 +176,16 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 	// ========== Step 4: 生成AI提示词 ==========
 	t.logger.Info("[STEP 4/6] Generating LLM prompt...")
 
-	// 获取历史交易和决策
+	// 获取历史交易
 	recentTrades, _ := t.agentService.GetRecentTrades(ctx, 10)
-	recentDecisions, _ := t.agentService.GetRecentDecisions(ctx, 3)
 
 	promptData := &PromptData{
-		StartTime:       t.startTime,
-		Iteration:       t.iteration,
-		AccountMetrics:  accountMetrics,
-		MarketDataMap:   marketData,
-		Positions:       positions,
-		RecentTrades:    recentTrades,
-		RecentDecisions: recentDecisions,
+		StartTime:      t.startTime,
+		Iteration:      t.iteration,
+		AccountMetrics: accountMetrics,
+		MarketDataMap:  marketData,
+		Positions:      positions,
+		RecentTrades:   recentTrades,
 	}
 
 	prompt := t.promptService.GeneratePrompt(ctx, promptData)

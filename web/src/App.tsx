@@ -529,7 +529,7 @@ const Dashboard = () => {
     } = useQuery<TradingStatusResponse>({
         queryKey: ['trading-status'],
         queryFn: () => fetcher<TradingStatusResponse>('/api/trading/status'),
-        refetchInterval: 15000,
+        refetchInterval: 3000,
     });
 
     const {
@@ -537,7 +537,7 @@ const Dashboard = () => {
     } = useQuery<AccountResponse>({
         queryKey: ['trading-account'],
         queryFn: () => fetcher<AccountResponse>('/api/trading/account'),
-        refetchInterval: 30000,
+        refetchInterval: 10000,
     });
 
     const {
@@ -547,7 +547,7 @@ const Dashboard = () => {
     } = useQuery<PositionsResponse>({
         queryKey: ['trading-positions'],
         queryFn: () => fetcher<PositionsResponse>('/api/trading/positions'),
-        refetchInterval: 20000,
+        refetchInterval: 5000,
     });
 
     const {
@@ -556,7 +556,7 @@ const Dashboard = () => {
     } = useQuery<DecisionsResponse>({
         queryKey: ['trading-decisions'],
         queryFn: () => fetcher<DecisionsResponse>('/api/trading/decisions?limit=10'),
-        refetchInterval: 60000,
+        refetchInterval: 30000,
     });
 
     const {
@@ -565,7 +565,7 @@ const Dashboard = () => {
     } = useQuery<TradesResponse>({
         queryKey: ['trading-trades'],
         queryFn: () => fetcher<TradesResponse>('/api/trading/trades?limit=100'),
-        refetchInterval: 30000,
+        refetchInterval: 15000,
     });
 
     const {
@@ -574,7 +574,7 @@ const Dashboard = () => {
     } = useQuery<EquityCurveResponse>({
         queryKey: ['trading-equity-curve'],
         queryFn: () => fetcher<EquityCurveResponse>('/api/trading/equity-curve'),
-        refetchInterval: 60000,
+        refetchInterval: 30000,
     });
 
     const accountMetrics = accountData ?? statusData?.account;
