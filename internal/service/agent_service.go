@@ -224,11 +224,6 @@ func (s *AgentService) formatToolCall(functionName string, args map[string]inter
 
 	case "closePosition":
 		symbol, _ := args["symbol"].(string)
-		reason, _ := args["reason"].(string)
-		reason = strings.TrimSpace(reason)
-		if reason != "" {
-			return fmt.Sprintf("平仓 %s（理由：%s）", symbol, reason)
-		}
 		return fmt.Sprintf("平仓 %s", symbol)
 
 	default:
@@ -642,7 +637,7 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 		"symbol":   symbol,
 		"pnl":      pnl,
 		"reason":   reason,
-		"message":  fmt.Sprintf("成功平仓 %s，原因：%s，盈亏 $%.2f", symbol, reason, pnl),
+		"message":  fmt.Sprintf("成功平仓 %s，原因：「%s」，盈亏 $%.2f", symbol, reason, pnl),
 	}, nil
 }
 
