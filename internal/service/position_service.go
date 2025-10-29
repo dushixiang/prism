@@ -53,8 +53,6 @@ func (s *PositionService) SyncPositions(ctx context.Context) error {
 		return fmt.Errorf("failed to get positions from binance: %w", err)
 	}
 
-	s.logger.Info("syncing positions", zap.Int("count", len(positions)))
-
 	// 提前加载本地持仓，便于保留开仓时间、止盈止损等信息
 	existingPositions, err := s.PositionRepo.FindAll(ctx)
 	if err != nil {
