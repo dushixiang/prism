@@ -55,6 +55,8 @@ func (s *PromptService) GeneratePrompt(ctx context.Context, data *PromptData) st
 
 	s.writeMarketOverview(&sb, data.MarketDataMap)
 
+	s.writeOpportunityRadar(&sb, data.MarketDataMap)
+
 	s.writeAccountInfo(&sb, data.AccountMetrics)
 
 	s.writePositionInfo(&sb, data.Positions)
@@ -114,7 +116,7 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 
 		// 多时间框架指标
 		sb.WriteString("### 多时间框架指标\n")
-		timeframes := []string{"1m", "3m", "5m", "15m", "30m", "1h"}
+		timeframes := []string{"5m", "15m", "30m", "1h", "4h"}
 		for _, tf := range timeframes {
 			if ind, ok := data.Timeframes[tf]; ok {
 				sb.WriteString(fmt.Sprintf("**%s**: 价格=$%.2f, EMA20=$%.2f, EMA50=$%.2f, MACD=%.2f, RSI7=%.1f, RSI14=%.1f, 成交量=%.0f\n",
@@ -125,7 +127,7 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 
 		// 日内序列
 		if data.IntradaySeries != nil {
-			sb.WriteString("### 日内序列（3分钟级别，最近10个数据点）\n")
+			sb.WriteString("### 日内序列（5分钟级别，最近10个数据点）\n")
 			sb.WriteString(fmt.Sprintf("中间价: %v\n", formatFloatArray(data.IntradaySeries.MidPrices)))
 			sb.WriteString(fmt.Sprintf("EMA20: %v\n", formatFloatArray(data.IntradaySeries.EMA20Series)))
 			sb.WriteString(fmt.Sprintf("MACD: %v\n", formatFloatArray(data.IntradaySeries.MACDSeries)))
@@ -145,6 +147,161 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 	}
 }
 
+// writeOpportunityRadar 写入机会雷达
+func (s *PromptService) writeOpportunityRadar(sb *strings.Builder, marketDataMap map[string]*MarketData) {
+	sb.WriteString("## 机会雷达\n\n")
+
+	if len(marketDataMap) == 0 {
+		sb.WriteString("缺少市场数据，暂无法识别高把握机会。\n\n")
+		return
+	}
+
+	type opportunity struct {
+		symbol  string
+		score   int
+		reasons []string
+	}
+
+	longOpps := make([]opportunity, 0)
+	shortOpps := make([]opportunity, 0)
+
+	for symbol, data := range marketDataMap {
+		if data == nil || len(data.Timeframes) == 0 {
+			continue
+		}
+
+		var longScore int
+		var longReasons []string
+		if tf1h, ok := data.Timeframes["1h"]; ok && tf1h != nil {
+			if tf1h.RSI14 > 0 && tf1h.RSI14 <= 35 {
+				longScore += 2
+				longReasons = append(longReasons, fmt.Sprintf("1h RSI14=%.1f 显著超卖", tf1h.RSI14))
+			}
+			if tf1h.MACD > 0 && tf1h.EMA20 > tf1h.EMA50 {
+				longScore++
+				longReasons = append(longReasons, "1h EMA20>EMA50 且 MACD>0，多头动量延续")
+			}
+		}
+		if tf5m, ok := data.Timeframes["5m"]; ok && tf5m != nil {
+			if tf5m.RSI14 > 0 && tf5m.RSI14 <= 30 {
+				longScore++
+				longReasons = append(longReasons, fmt.Sprintf("5m RSI14=%.1f 极度超卖", tf5m.RSI14))
+			}
+			if tf5m.MACD > 0 && tf5m.EMA20 > tf5m.EMA50 {
+				longScore++
+				longReasons = append(longReasons, "5m 动量转多")
+			}
+		}
+		if tf15m, ok := data.Timeframes["15m"]; ok && tf15m != nil {
+			if tf15m.RSI14 > 0 && tf15m.RSI14 <= 30 {
+				longScore++
+				longReasons = append(longReasons, fmt.Sprintf("15m RSI14=%.1f 极度超卖", tf15m.RSI14))
+			}
+			if tf15m.MACD > 0 && tf15m.EMA20 > tf15m.EMA50 {
+				longScore++
+				longReasons = append(longReasons, "15m 动量由空转多")
+			}
+		}
+		if data.FundingRate < -0.0001 {
+			longScore++
+			longReasons = append(longReasons, fmt.Sprintf("资金费率 %.4f%% 偏空，潜在逼空", data.FundingRate*100))
+		}
+		if longScore > 0 {
+			longOpps = append(longOpps, opportunity{
+				symbol:  symbol,
+				score:   longScore,
+				reasons: longReasons,
+			})
+		}
+
+		var shortScore int
+		var shortReasons []string
+		if tf1h, ok := data.Timeframes["1h"]; ok && tf1h != nil {
+			if tf1h.RSI14 >= 65 {
+				shortScore += 2
+				shortReasons = append(shortReasons, fmt.Sprintf("1h RSI14=%.1f 进入过热区", tf1h.RSI14))
+			}
+			if tf1h.MACD < 0 && tf1h.EMA20 < tf1h.EMA50 {
+				shortScore++
+				shortReasons = append(shortReasons, "1h EMA20<EMA50 且 MACD<0，空头力量加强")
+			}
+		}
+		if tf5m, ok := data.Timeframes["5m"]; ok && tf5m != nil {
+			if tf5m.RSI14 >= 70 {
+				shortScore++
+				shortReasons = append(shortReasons, fmt.Sprintf("5m RSI14=%.1f 极度超买", tf5m.RSI14))
+			}
+			if tf5m.MACD < 0 && tf5m.EMA20 < tf5m.EMA50 {
+				shortScore++
+				shortReasons = append(shortReasons, "5m 动量转空")
+			}
+		}
+		if tf15m, ok := data.Timeframes["15m"]; ok && tf15m != nil {
+			if tf15m.RSI14 >= 70 {
+				shortScore++
+				shortReasons = append(shortReasons, fmt.Sprintf("15m RSI14=%.1f 极度超买", tf15m.RSI14))
+			}
+			if tf15m.MACD < 0 && tf15m.EMA20 < tf15m.EMA50 {
+				shortScore++
+				shortReasons = append(shortReasons, "15m 动量由多转空")
+			}
+		}
+		if data.FundingRate > 0.0001 {
+			shortScore++
+			shortReasons = append(shortReasons, fmt.Sprintf("资金费率 %.4f%% 偏多，回落压力大", data.FundingRate*100))
+		}
+		if shortScore > 0 {
+			shortOpps = append(shortOpps, opportunity{
+				symbol:  symbol,
+				score:   shortScore,
+				reasons: shortReasons,
+			})
+		}
+	}
+
+	sort.Slice(longOpps, func(i, j int) bool {
+		if longOpps[i].score == longOpps[j].score {
+			return longOpps[i].symbol < longOpps[j].symbol
+		}
+		return longOpps[i].score > longOpps[j].score
+	})
+
+	sort.Slice(shortOpps, func(i, j int) bool {
+		if shortOpps[i].score == shortOpps[j].score {
+			return shortOpps[i].symbol < shortOpps[j].symbol
+		}
+		return shortOpps[i].score > shortOpps[j].score
+	})
+
+	maxItems := func(listLen int) int {
+		if listLen > 3 {
+			return 3
+		}
+		return listLen
+	}
+
+	if len(longOpps) == 0 {
+		sb.WriteString("- 当前未识别到高质量的多头候选，耐心等待更明确的共振信号。\n")
+	} else {
+		sb.WriteString("**多头候选（排序按共振强度）**\n")
+		for _, opp := range longOpps[:maxItems(len(longOpps))] {
+			sb.WriteString(fmt.Sprintf("- %s（评分 %d）：%s\n", opp.symbol, opp.score, strings.Join(opp.reasons, "；")))
+		}
+	}
+
+	sb.WriteString("\n")
+
+	if len(shortOpps) == 0 {
+		sb.WriteString("- 当前未识别到高质量的空头候选，可等待价格反弹或结构破坏。\n\n")
+	} else {
+		sb.WriteString("**空头候选（排序按共振强度）**\n")
+		for _, opp := range shortOpps[:maxItems(len(shortOpps))] {
+			sb.WriteString(fmt.Sprintf("- %s（评分 %d）：%s\n", opp.symbol, opp.score, strings.Join(opp.reasons, "；")))
+		}
+		sb.WriteString("\n")
+	}
+}
+
 // writeAccountInfo 写入账户信息
 func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMetrics) {
 	sb.WriteString("## 账户与风险状态\n\n")
@@ -153,8 +310,6 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 		sb.WriteString("暂无账户数据。\n\n")
 		return
 	}
-
-	tc := s.config.Trading
 
 	sb.WriteString(fmt.Sprintf("- 初始账户净值: $%.2f\n", metrics.InitialBalance))
 	sb.WriteString(fmt.Sprintf("- 峰值账户净值: $%.2f\n", metrics.PeakBalance))
@@ -168,20 +323,21 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 	sb.WriteString("### 自主管理提醒\n")
 	sb.WriteString("- 后端不会自动触发止损、止盈或强制平仓，请根据纪律自行调用工具执行。\n")
 
-	maxDrawdown := tc.MaxDrawdownPercent
-	if maxDrawdown > 0 {
-		forcedFlat := maxDrawdown + 5
-		switch {
-		case metrics.DrawdownFromPeak >= forcedFlat:
-			sb.WriteString(fmt.Sprintf("- 回撤已达 %.2f%%（高于参考强平线 %.2f%%），必须制定并执行全仓退出计划。\n", metrics.DrawdownFromPeak, forcedFlat))
-		case metrics.DrawdownFromPeak >= maxDrawdown:
-			sb.WriteString(fmt.Sprintf("- 回撤 %.2f%% ≥ 参考阈值 %.2f%%，暂停新开仓，先处理存量风险。\n", metrics.DrawdownFromPeak, maxDrawdown))
-		default:
-			sb.WriteString(fmt.Sprintf("- 回撤 %.2f%% 低于参考阈值 %.2f%%，可继续谨慎评估机会。\n", metrics.DrawdownFromPeak, maxDrawdown))
-		}
-	} else {
-		sb.WriteString("- 配置未提供回撤阈值，请自行定义并严格执行风控纪律。\n")
-	}
+	//tc := s.config.Trading
+	//maxDrawdown := tc.MaxDrawdownPercent
+	//if maxDrawdown > 0 {
+	//	forcedFlat := maxDrawdown + 5
+	//	switch {
+	//	case metrics.DrawdownFromPeak >= forcedFlat:
+	//		sb.WriteString(fmt.Sprintf("- 回撤已达 %.2f%%（高于参考强平线 %.2f%%），必须制定并执行全仓退出计划。\n", metrics.DrawdownFromPeak, forcedFlat))
+	//	case metrics.DrawdownFromPeak >= maxDrawdown:
+	//		sb.WriteString(fmt.Sprintf("- 回撤 %.2f%% ≥ 参考阈值 %.2f%%，暂停新开仓，先处理存量风险。\n", metrics.DrawdownFromPeak, maxDrawdown))
+	//	default:
+	//		sb.WriteString(fmt.Sprintf("- 回撤 %.2f%% 低于参考阈值 %.2f%%，可继续谨慎评估机会。\n", metrics.DrawdownFromPeak, maxDrawdown))
+	//	}
+	//} else {
+	//	sb.WriteString("- 配置未提供回撤阈值，请自行定义并严格执行风控纪律。\n")
+	//}
 	sb.WriteString("\n")
 }
 
@@ -226,6 +382,16 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 			}
 		}
 		sb.WriteString("- 执行提示：若计划平仓，请在行动方案中明确调用 `closePosition` 并说明触发条件。\n")
+		if strings.TrimSpace(pos.EntryReason) != "" {
+			sb.WriteString(fmt.Sprintf("- 开仓理由：%s\n", pos.EntryReason))
+		} else {
+			sb.WriteString("- 开仓理由：未记录，请补充入场逻辑以便后续复盘。\n")
+		}
+		if strings.TrimSpace(pos.ExitPlan) != "" {
+			sb.WriteString(fmt.Sprintf("- 退出计划：%s\n", pos.ExitPlan))
+		} else {
+			sb.WriteString("- 退出计划：缺失，请补充明确的止损/止盈或退出条件。\n")
+		}
 		sb.WriteString("\n")
 	}
 }

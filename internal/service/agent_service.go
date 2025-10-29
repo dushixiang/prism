@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -253,8 +254,12 @@ func (s *AgentService) buildOpenAITools(accountMetrics *AccountMetrics) []openai
 							"type":        "string",
 							"description": "开仓理由，说明信号来源和时间框架共振情况",
 						},
+						"exit_plan": map[string]interface{}{
+							"type":        "string",
+							"description": "详细的退出计划/条件，包含止损、止盈或结构反转触发点",
+						},
 					},
-					"required": []string{"symbol", "side", "leverage", "quantity", "reason"},
+					"required": []string{"symbol", "side", "leverage", "quantity", "reason", "exit_plan"},
 				},
 			},
 		},
@@ -374,6 +379,8 @@ func (s *AgentService) toolGetPositions(ctx context.Context) (map[string]interfa
 			"pnl_percent":    pos.CalculatePnlPercent(),
 			"leverage":       pos.Leverage,
 			"holding_hours":  pos.CalculateHoldingHours(),
+			"entry_reason":   pos.EntryReason,
+			"exit_plan":      pos.ExitPlan,
 		})
 	}
 
@@ -392,13 +399,16 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 	leverage := int(leverageFloat)
 	quantity, _ := args["quantity"].(float64)
 	reason, _ := args["reason"].(string)
+	exitPlanRaw, _ := args["exit_plan"].(string)
+	exitPlan := strings.TrimSpace(exitPlanRaw)
 
 	s.logger.Info("opening position",
 		zap.String("symbol", symbol),
 		zap.String("side", side),
 		zap.Int("leverage", leverage),
 		zap.Float64("margin_usdt", quantity),
-		zap.String("reason", reason))
+		zap.String("reason", reason),
+		zap.String("exit_plan", exitPlan))
 
 	// 验证参数
 	if symbol == "" || side == "" {
@@ -409,6 +419,12 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 	}
 	if quantity < 5 {
 		return nil, fmt.Errorf("保证金太小（%.2f USDT），最少需要 5 USDT 才能满足币安最小名义价值要求", quantity)
+	}
+	if strings.TrimSpace(reason) == "" {
+		return nil, fmt.Errorf("开仓理由 reason 不能为空")
+	}
+	if exitPlan == "" {
+		return nil, fmt.Errorf("退出计划 exit_plan 不能为空，请明确止损与退出逻辑")
 	}
 
 	// 验证杠杆
@@ -485,6 +501,19 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 	// 同步本地持仓，保证前端能立即看到最新仓位
 	if err := s.positionService.SyncPositions(ctx); err != nil {
 		s.logger.Warn("failed to sync positions after opening position", zap.Error(err))
+	}
+
+	if err := s.positionService.UpdatePositionPlan(ctx, symbol, side, reason, exitPlan); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			s.logger.Warn("unable to record position plan, position not found after sync",
+				zap.String("symbol", symbol),
+				zap.String("side", side))
+		} else {
+			s.logger.Error("failed to update position plan",
+				zap.String("symbol", symbol),
+				zap.String("side", side),
+				zap.Error(err))
+		}
 	}
 
 	return map[string]interface{}{

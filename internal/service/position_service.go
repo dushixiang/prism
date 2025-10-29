@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dushixiang/prism/internal/models"
@@ -174,6 +175,37 @@ func (s *PositionService) UpdatePeakPnl(ctx context.Context, positionID string, 
 // DeletePosition 删除持仓记录
 func (s *PositionService) DeletePosition(ctx context.Context, id string) error {
 	return s.PositionRepo.DeleteById(ctx, id)
+}
+
+// UpdatePositionPlan 更新持仓的开仓理由与退出计划
+func (s *PositionService) UpdatePositionPlan(ctx context.Context, symbol, side, entryReason, exitPlan string) error {
+	entryReason = strings.TrimSpace(entryReason)
+	exitPlan = strings.TrimSpace(exitPlan)
+
+	if entryReason == "" && exitPlan == "" {
+		return nil
+	}
+
+	position, err := s.PositionRepo.FindActiveBySymbolAndSide(ctx, symbol, side)
+	if err != nil {
+		return err
+	}
+
+	updated := false
+	if entryReason != "" && position.EntryReason != entryReason {
+		position.EntryReason = entryReason
+		updated = true
+	}
+	if exitPlan != "" && position.ExitPlan != exitPlan {
+		position.ExitPlan = exitPlan
+		updated = true
+	}
+
+	if !updated {
+		return nil
+	}
+
+	return s.PositionRepo.Save(ctx, &position)
 }
 
 // GetPositionWarnings 获取持仓警告信息

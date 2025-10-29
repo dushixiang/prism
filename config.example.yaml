@@ -29,7 +29,7 @@ app:
   trading:
     # 交易策略核心参数（后端不再提供自动止损/止盈，请在模型策略中自行执行风控）。
     symbols: [ "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT" ]  # 策略关注的交易对列表。
-    interval_minutes: 5  # 策略重新评估与下单的最小时间间隔（分钟）。
+    interval_minutes: 10  # 策略重新评估与下单的最小时间间隔（分钟）。
     max_drawdown_percent: 15  # 账户回撤的参考上限（模型需自行遵守）。
     max_holding_hours: 36  # 单笔持仓建议的最长持有时长（小时）。
     max_positions: 5  # 同时持有的最大仓位数量。

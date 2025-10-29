@@ -15,7 +15,7 @@ func NewIndicatorService() *IndicatorService {
 
 // TimeframeIndicators 单个时间框架的指标
 type TimeframeIndicators struct {
-	Timeframe  string  `json:"timeframe"` // 1m/3m/5m/15m/30m/1h/4h
+	Timeframe  string  `json:"timeframe"` // 5m/15m/30m/1h/4h
 	Price      float64 `json:"price"`
 	EMA20      float64 `json:"ema20"`
 	EMA50      float64 `json:"ema50"`
@@ -99,7 +99,7 @@ func (s *IndicatorService) CalculateIndicators(klines []*exchange.Kline) *Timefr
 	}
 }
 
-// CalculateTimeSeries 计算时序数据（日内3分钟级别，最近10个数据点）
+// CalculateTimeSeries 计算时序数据（日内5分钟级别，最近10个数据点）
 func (s *IndicatorService) CalculateTimeSeries(klines []*exchange.Kline) *TimeSeriesData {
 	if len(klines) < 50 {
 		return nil

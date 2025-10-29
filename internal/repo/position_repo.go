@@ -29,6 +29,17 @@ func (r PositionRepo) FindBySymbolAndSide(ctx context.Context, symbol, side stri
 	return m, err
 }
 
+// FindActiveBySymbolAndSide 根据交易对和方向查找最新的未删除持仓
+func (r PositionRepo) FindActiveBySymbolAndSide(ctx context.Context, symbol, side string) (m models.Position, err error) {
+	db := r.GetDB(ctx)
+	err = db.
+		Table(r.GetTableName()).
+		Where("symbol = ? AND side = ?", symbol, side).
+		Order("created_at DESC").
+		First(&m).Error
+	return m, err
+}
+
 // DeleteAll 删除所有持仓记录
 func (r PositionRepo) DeleteAll(ctx context.Context) error {
 	db := r.GetDB(ctx)

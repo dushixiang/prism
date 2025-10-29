@@ -19,6 +19,8 @@ type Position struct {
 	Leverage         int            `gorm:"type:int;not null" json:"leverage"`                    // 杠杆倍数
 	Margin           float64        `gorm:"type:decimal(20,8)" json:"margin"`                     // 保证金（USDT）
 	OrderID          string         `gorm:"type:varchar(50)" json:"order_id"`                     // 开仓订单ID
+	EntryReason      string         `gorm:"type:text" json:"entry_reason"`                        // 开仓理由
+	ExitPlan         string         `gorm:"type:text" json:"exit_plan"`                           // 退出条件/计划
 	StopLoss         float64        `gorm:"type:decimal(20,8)" json:"stop_loss"`                  // 止损价格
 	TakeProfit       float64        `gorm:"type:decimal(20,8)" json:"take_profit"`                // 止盈价格
 	PeakPnlPercent   float64        `gorm:"type:decimal(10,4);default:0" json:"peak_pnl_percent"` // 历史最高盈亏百分比

@@ -2,7 +2,19 @@ import {QueryClient, QueryClientProvider, useQuery} from '@tanstack/react-query'
 import {useEffect, useMemo, useRef, useState} from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import {ColorType, createChart, type IChartApi, type ISeriesApi, LineSeries, type Time} from 'lightweight-charts';
+import {
+    ColorType,
+    createChart,
+    type IChartApi,
+    type ISeriesApi,
+    LineSeries,
+    type Time,
+    type BusinessDay,
+    type UTCTimestamp,
+    type MouseEventParams,
+    type LineData,
+    type BarData,
+} from 'lightweight-charts';
 
 type TradingLoopStatus = {
     is_running: boolean;
@@ -44,6 +56,8 @@ type Position = {
     remaining_hours?: number;
     opened_at?: string;
     warnings?: string[];
+    entry_reason?: string;
+    exit_plan?: string;
 };
 
 type Decision = {
@@ -164,6 +178,7 @@ const formatDateTime = (value?: string) => {
         return value;
     }
     return date.toLocaleString('zh-CN', {
+        timeZone: 'Asia/Shanghai',
         month: '2-digit',
         day: '2-digit',
         hour: '2-digit',
@@ -192,7 +207,7 @@ const getPnlColor = (value: number | undefined) => {
     return 'text-slate-600';
 };
 
-const cardClass = 'rounded-md border border-slate-200 bg-white';
+const cardClass = 'rounded-md border border-slate-200 bg-white shadow-sm';
 
 // 主资金曲线图表组件
 const MainEquityCurveChart = ({data, initialBalance}: { data: EquityCurveDataPoint[]; initialBalance: number }) => {
@@ -200,8 +215,40 @@ const MainEquityCurveChart = ({data, initialBalance}: { data: EquityCurveDataPoi
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<any> | null>(null);
 
+    const formatTimestampToCST = (epochSeconds: number) => {
+        if (!Number.isFinite(epochSeconds)) {
+            return '-';
+        }
+        return new Date(epochSeconds * 1000).toLocaleString('zh-CN', {
+            timeZone: 'Asia/Shanghai',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+        });
+    };
+
+    const toEpochSeconds = (time: Time): number | null => {
+        if (typeof time === 'number') {
+            return time;
+        }
+        if (typeof time === 'string') {
+            const parsed = Number(time);
+            return Number.isFinite(parsed) ? parsed : null;
+        }
+        const businessDay = time as BusinessDay;
+        if (typeof businessDay?.year === 'number' && typeof businessDay?.month === 'number' && typeof businessDay?.day === 'number') {
+            return Math.floor(Date.UTC(businessDay.year, businessDay.month - 1, businessDay.day) / 1000);
+        }
+        return null;
+    };
+
     useEffect(() => {
         if (!chartContainerRef.current || data.length === 0) return;
+
+        chartContainerRef.current.style.position = 'relative';
 
         // 创建图表
         const chart = createChart(chartContainerRef.current, {
@@ -223,6 +270,12 @@ const MainEquityCurveChart = ({data, initialBalance}: { data: EquityCurveDataPoi
                 borderColor: '#e2e8f0',
                 timeVisible: true,
                 secondsVisible: false,
+            },
+            localization: {
+                timeFormatter: (time: UTCTimestamp | BusinessDay) => {
+                    const seconds = toEpochSeconds(time as Time);
+                    return seconds ? formatTimestampToCST(seconds) : '';
+                },
             },
             crosshair: {
                 mode: 1,
@@ -266,6 +319,95 @@ const MainEquityCurveChart = ({data, initialBalance}: { data: EquityCurveDataPoi
 
         lineSeries.setData(chartData);
 
+        const tooltip = document.createElement('div');
+        tooltip.style.position = 'absolute';
+        tooltip.style.display = 'none';
+        tooltip.style.pointerEvents = 'none';
+        tooltip.style.zIndex = '50';
+        tooltip.style.padding = '6px 10px';
+        tooltip.style.borderRadius = '8px';
+        tooltip.style.background = 'rgba(30, 41, 59, 0.92)';
+        tooltip.style.color = '#f8fafc';
+        tooltip.style.fontSize = '12px';
+        tooltip.style.lineHeight = '1.4';
+        tooltip.style.border = '1px solid rgba(148, 163, 184, 0.35)';
+        tooltip.style.boxShadow = '0 12px 32px rgba(15, 23, 42, 0.25)';
+        tooltip.style.whiteSpace = 'nowrap';
+
+        chartContainerRef.current.appendChild(tooltip);
+
+        const handleCrosshairMove = (param: MouseEventParams<Time>) => {
+            const container = chartContainerRef.current;
+            const point = param.point;
+            const timeValue = param.time;
+
+            if (!container || !point || timeValue === undefined) {
+                tooltip.style.display = 'none';
+                return;
+            }
+
+            const x = Number(point.x);
+            const y = Number(point.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 ||
+                x > container.clientWidth || y > container.clientHeight) {
+                tooltip.style.display = 'none';
+                return;
+            }
+
+            const seriesValue = param.seriesData.get(lineSeries);
+            let price: number | undefined;
+            if (seriesValue) {
+                const typedSeries = seriesValue as Partial<LineData<Time>> & Partial<BarData<Time>>;
+                if (typeof typedSeries.value === 'number') {
+                    price = typedSeries.value;
+                } else if (typeof typedSeries.close === 'number') {
+                    price = typedSeries.close;
+                }
+            }
+
+            if (price === undefined) {
+                tooltip.style.display = 'none';
+                return;
+            }
+
+            const epochSeconds = toEpochSeconds(timeValue as Time);
+            if (!epochSeconds) {
+                tooltip.style.display = 'none';
+                return;
+            }
+
+            tooltip.innerHTML = `
+                <div style="font-size:11px;color:#cbd5f5;margin-bottom:2px;">${formatTimestampToCST(epochSeconds)}</div>
+                <div style="font-size:12px;color:#f8fafc;font-weight:600;">余额：${formatCurrency(price)}</div>
+            `;
+
+            tooltip.style.display = 'block';
+            const tooltipRect = tooltip.getBoundingClientRect();
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+
+            let left = x;
+            let top = y - 12;
+
+            if (left < tooltipRect.width / 2 + 8) {
+                left = tooltipRect.width / 2 + 8;
+            } else if (left > containerWidth - tooltipRect.width / 2 - 8) {
+                left = containerWidth - tooltipRect.width / 2 - 8;
+            }
+
+            if (top < tooltipRect.height + 12) {
+                top = y + tooltipRect.height + 12;
+            }
+            if (top > containerHeight - 12) {
+                top = containerHeight - 12;
+            }
+
+            tooltip.style.left = `${left}px`;
+            tooltip.style.top = `${top}px`;
+        };
+
+        chart.subscribeCrosshairMove(handleCrosshairMove);
+
         // 添加初始余额参考线
         if (initialBalance > 0) {
             const minTime = Math.min(...data.map(d => d.timestamp / 1000));
@@ -307,6 +449,10 @@ const MainEquityCurveChart = ({data, initialBalance}: { data: EquityCurveDataPoi
 
         return () => {
             window.removeEventListener('resize', handleResize);
+            chart.unsubscribeCrosshairMove(handleCrosshairMove);
+            if (tooltip.parentNode) {
+                tooltip.parentNode.removeChild(tooltip);
+            }
             chart.remove();
         };
     }, [data, initialBalance]);
@@ -319,7 +465,7 @@ const MainEquityCurveChart = ({data, initialBalance}: { data: EquityCurveDataPoi
         );
     }
 
-    return <div ref={chartContainerRef} className="h-full w-full"/>;
+    return <div ref={chartContainerRef} className="relative h-full w-full"/>;
 };
 
 // 交易列表项组件
@@ -329,7 +475,7 @@ const TradeItem = ({trade}: { trade: Trade }) => {
     const notional = trade.price * trade.quantity;
 
     return (
-        <div className={`${cardClass} mb-3 p-4`}>
+        <div className={`${cardClass} mb-3 p-3 sm:p-4`}>
             <div className="mb-3 flex items-center justify-between text-xs text-slate-500">
                 <span className="flex items-center gap-3">
                     <span className={`text-sm font-semibold ${isLong ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -455,19 +601,28 @@ const Dashboard = () => {
     }, [tradesData?.trades]);
 
     return (
-        <div className="flex h-screen flex-col overflow-hidden bg-slate-50">
+        <div className="flex min-h-screen flex-col bg-slate-50 lg:h-screen lg:overflow-hidden">
             {/* 顶部导航栏 */}
             <header className="shrink-0 border-b border-slate-200 bg-white/95 backdrop-blur">
                 <div
-                    className="mx-auto flex max-w-[1920px] flex-col gap-6 px-8 py-5 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="flex flex-col gap-3">
-                        <div className="flex items-center gap-4">
-                            <h1 className="text-2xl font-semibold text-slate-900">Prism 交易监控</h1>
-                            <span className="text-sm text-slate-500">策略状态一目了然</span>
+                    className="mx-auto flex max-w-[1920px] flex-col gap-6 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8 lg:py-5">
+                    <div className="flex flex-col gap-4">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex items-center gap-3">
+                                <h1 className="text-xl font-semibold text-slate-900 sm:text-2xl">Prism 交易监控</h1>
+                                <span className="text-xs text-slate-500 sm:text-sm">策略状态一目了然</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-slate-500 sm:hidden">
+                                {statusData?.loop.symbols?.slice(0, 3).map((symbol) => (
+                                    <span key={symbol} className="font-mono text-slate-600">
+                                        {symbol}
+                                    </span>
+                                ))}
+                            </div>
                         </div>
 
                         {/* 币种价格展示 */}
-                        <div className="flex flex-wrap gap-4 text-sm text-slate-500">
+                        <div className="hidden flex-wrap gap-4 text-sm text-slate-500 sm:flex">
                             {statusData?.loop.symbols?.map((symbol) => (
                                 <span key={symbol} className="font-mono text-slate-600">
                                     {symbol}
@@ -477,25 +632,25 @@ const Dashboard = () => {
                     </div>
 
                     {/* 账户统计 */}
-                    <div className="flex flex-wrap items-center gap-6 text-sm text-slate-600">
+                    <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 sm:gap-6 sm:text-sm">
                         {accountMetrics && (
                             <>
                                 <div className="flex flex-col gap-1 text-right">
                                     <span className="text-xs uppercase tracking-[0.2em] text-slate-400">总资产</span>
-                                    <span className="font-mono text-lg font-semibold text-slate-900">
+                                    <span className="font-mono text-base font-semibold text-slate-900 sm:text-lg">
                                         {formatCurrency(accountMetrics.total_balance)}
                                     </span>
                                 </div>
                                 <div className="flex flex-col gap-1 text-right">
                                     <span className="text-xs uppercase tracking-[0.2em] text-slate-400">收益率</span>
                                     <span
-                                        className={`font-mono text-lg font-semibold ${getPnlColor(accountMetrics.return_percent)}`}>
+                                        className={`font-mono text-base font-semibold sm:text-lg ${getPnlColor(accountMetrics.return_percent)}`}>
                                         {formatPercent(accountMetrics.return_percent)}
                                     </span>
                                 </div>
                                 <div className="flex flex-col gap-1 text-right">
                                     <span className="text-xs uppercase tracking-[0.2em] text-slate-400">最大回撤</span>
-                                    <span className="font-mono text-lg font-semibold text-rose-600">
+                                    <span className="font-mono text-base font-semibold text-rose-600 sm:text-lg">
                                         {formatPercent(accountMetrics.drawdown_from_peak)}
                                     </span>
                                 </div>
@@ -507,12 +662,12 @@ const Dashboard = () => {
 
             {/* 主内容区 */}
             <div className="flex-1 overflow-hidden">
-                <div className="mx-auto flex h-full max-w-[1920px] gap-6 px-6 pb-6 pt-4">
+                <div className="mx-auto flex h-full max-w-[1920px] flex-col gap-4 px-4 pb-6 pt-4 sm:gap-6 sm:px-6 lg:flex-row">
                     {/* 左侧: 主图表区域 */}
-                    <div className={`${cardClass} flex min-h-0 flex-1 flex-col p-6`}>
-                        <div className="mb-4 flex items-center justify-between">
-                            <h2 className="text-lg font-semibold text-slate-900">资金曲线</h2>
-                            <div className="flex items-center gap-4 text-sm text-slate-600">
+                    <div className={`${cardClass} flex min-h-[320px] flex-1 flex-col p-4 sm:p-6`}>
+                        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <h2 className="text-lg font-semibold text-slate-900 sm:text-xl">资金曲线</h2>
+                            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600 sm:gap-4 sm:text-sm">
                                 <span>
                                     初始: {formatCurrency(accountMetrics?.initial_balance)}
                                 </span>
@@ -530,10 +685,12 @@ const Dashboard = () => {
                                     {getErrorMessage(equityCurveError)}
                                 </div>
                             ) : equityCurveData?.data ? (
-                                <MainEquityCurveChart
-                                    data={equityCurveData.data}
-                                    initialBalance={accountMetrics?.initial_balance ?? 10000}
-                                />
+                                <div className="h-[260px] sm:h-[360px] lg:h-full">
+                                    <MainEquityCurveChart
+                                        data={equityCurveData.data}
+                                        initialBalance={accountMetrics?.initial_balance ?? 10000}
+                                    />
+                                </div>
                             ) : (
                                 <div className="flex h-full items-center justify-center text-slate-400">
                                     加载中...
@@ -543,12 +700,12 @@ const Dashboard = () => {
                     </div>
 
                     {/* 右侧: 信息面板 */}
-                    <div className={`${cardClass} flex h-full min-h-0 w-[400px] min-w-[400px] flex-col`}>
+                    <div className={`${cardClass} flex h-full min-h-0 flex-col lg:w-[380px] lg:min-w-[360px]`}>
                         {/* 侧边栏标签 */}
-                        <div className="flex border-b border-slate-200">
+                        <div className="flex flex-wrap border-b border-slate-200">
                             <button
                                 onClick={() => setActiveTab('all')}
-                                className={`flex-1 border-r border-slate-200 px-4 py-3 text-sm font-medium transition ${
+                                className={`flex-1 border-r border-slate-200 px-3 py-2 text-xs font-medium transition sm:px-4 sm:py-3 sm:text-sm ${
                                     activeTab === 'all'
                                         ? 'bg-blue-50 text-blue-700'
                                         : 'text-slate-600 hover:bg-slate-50'
@@ -558,7 +715,7 @@ const Dashboard = () => {
                             </button>
                             <button
                                 onClick={() => setActiveTab('positions')}
-                                className={`flex-1 border-r border-slate-200 px-4 py-3 text-sm font-medium transition ${
+                                className={`flex-1 border-r border-slate-200 px-3 py-2 text-xs font-medium transition sm:px-4 sm:py-3 sm:text-sm ${
                                     activeTab === 'positions'
                                         ? 'bg-blue-50 text-blue-700'
                                         : 'text-slate-600 hover:bg-slate-50'
@@ -568,7 +725,7 @@ const Dashboard = () => {
                             </button>
                             <button
                                 onClick={() => setActiveTab('trades')}
-                                className={`flex-1 border-r border-slate-200 px-4 py-3 text-sm font-medium transition ${
+                                className={`flex-1 border-r border-slate-200 px-3 py-2 text-xs font-medium transition sm:px-4 sm:py-3 sm:text-sm ${
                                     activeTab === 'trades'
                                         ? 'bg-blue-50 text-blue-700'
                                         : 'text-slate-600 hover:bg-slate-50'
@@ -578,7 +735,7 @@ const Dashboard = () => {
                             </button>
                             <button
                                 onClick={() => setActiveTab('decisions')}
-                                className={`flex-1 px-4 py-3 text-sm font-medium transition ${
+                                className={`flex-1 px-3 py-2 text-xs font-medium transition sm:px-4 sm:py-3 sm:text-sm ${
                                     activeTab === 'decisions'
                                         ? 'bg-blue-50 text-blue-700'
                                         : 'text-slate-600 hover:bg-slate-50'
@@ -590,8 +747,8 @@ const Dashboard = () => {
 
                         {/* 内容头部 */}
                         <div className="border-b border-slate-200 p-4">
-                            <div className="mb-2 flex items-center justify-between">
-                                <h3 className="text-sm font-semibold text-slate-900">
+                            <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                <h3 className="text-sm font-semibold text-slate-900 sm:text-base">
                                     {activeTab === 'positions' && '当前持仓'}
                                     {activeTab === 'trades' && '交易历史'}
                                     {activeTab === 'decisions' && 'AI决策记录'}
@@ -605,7 +762,7 @@ const Dashboard = () => {
                                     </span>
                             </div>
                             {activeTab === 'trades' && stats.totalTrades > 0 && (
-                                <div className="mt-2 flex gap-3 text-xs">
+                                <div className="mt-2 flex flex-wrap gap-3 text-xs sm:text-sm">
                                         <span className="text-emerald-600">
                                             胜 {stats.winningTrades}
                                         </span>
@@ -623,7 +780,7 @@ const Dashboard = () => {
                         </div>
 
                         {/* 滚动内容区 */}
-                        <div className="flex-1 overflow-y-auto p-4">
+                        <div className="flex-1 p-4 lg:overflow-y-auto">
                             {/* 持仓列表 */}
                             {activeTab === 'positions' && (
                                 <>
@@ -641,7 +798,7 @@ const Dashboard = () => {
                                         return (
                                             <div
                                                 key={position.id}
-                                                className={`${cardClass} mb-3 p-4`}
+                                                className={`${cardClass} mb-3 p-3 sm:p-4`}
                                             >
                                                 <div className="mb-2 flex items-center justify-between">
                                                         <span className="flex items-center gap-3">
@@ -689,6 +846,19 @@ const Dashboard = () => {
                                                                 {formatPercent(position.pnl_percent)} ({formatCurrency(position.unrealized_pnl)})
                                                             </span>
                                                     </div>
+                                                    <div className="pt-2 text-slate-600">
+                                                        <div className="mb-1 font-medium">策略信息</div>
+                                                        <div className="space-y-1 text-[11px] leading-relaxed text-slate-600">
+                                                            <div>
+                                                                <span className="text-slate-500">开仓理由：</span>
+                                                                <span>{position.entry_reason?.trim() || '未提供'}</span>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-slate-500">退出计划：</span>
+                                                                <span>{position.exit_plan?.trim() || '未提供'}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
                                                     {position.warnings && position.warnings.length > 0 && (
                                                         <div
                                                             className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
@@ -730,7 +900,7 @@ const Dashboard = () => {
                                         decisionsData.decisions.map((decision) => (
                                             <div
                                                 key={decision.id}
-                                                className={`${cardClass} mb-3 p-4`}
+                                                className={`${cardClass} mb-3 p-3 sm:p-4`}
                                             >
                                                 <div
                                                     className="mb-2 flex items-center justify-between text-xs text-slate-600">

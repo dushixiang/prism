@@ -76,6 +76,8 @@ func (h *TradingHandler) GetStatus(c echo.Context) error {
 			"holding_hours":   pos.CalculateHoldingHours(),
 			"remaining_hours": pos.RemainingHours(),
 			"opened_at":       pos.OpenedAt,
+			"entry_reason":    pos.EntryReason,
+			"exit_plan":       pos.ExitPlan,
 		})
 	}
 
@@ -156,6 +158,8 @@ func (h *TradingHandler) GetPositions(c echo.Context) error {
 			"holding_cycles":    pos.CalculateHoldingCycles(),
 			"remaining_hours":   pos.RemainingHours(),
 			"opened_at":         pos.OpenedAt,
+			"entry_reason":      pos.EntryReason,
+			"exit_plan":         pos.ExitPlan,
 			"warnings":          warnings,
 		})
 	}
