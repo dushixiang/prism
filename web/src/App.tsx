@@ -2,6 +2,7 @@ import {QueryClient, QueryClientProvider, useQuery} from '@tanstack/react-query'
 import {useEffect, useMemo, useRef, useState} from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import {
     ColorType,
     createChart,
@@ -907,8 +908,8 @@ const Dashboard = () => {
                                                     <span>第 {decision.iteration} 次迭代</span>
                                                     <span>{formatDateTime(decision.executed_at)}</span>
                                                 </div>
-                                                <div className="prose prose-sm prose-slate max-w-none text-sm">
-                                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                                <div className="prose prose-sm prose-slate max-w-none text-sm [&>*]:mb-2 [&>*:last-child]:mb-0 [&_p]:leading-relaxed [&_ul]:my-2 [&_ol]:my-2 [&_li]:my-1 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_h4]:text-xs [&_strong]:font-semibold [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_pre]:bg-slate-100 [&_pre]:p-2 [&_pre]:rounded [&_pre]:overflow-x-auto [&_table]:w-full [&_table]:border-collapse [&_table]:my-3 [&_table]:text-xs [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-slate-300 [&_td]:px-2 [&_td]:py-1.5">
+                                                    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                                                         {decision.decision_content ?? ''}
                                                     </ReactMarkdown>
                                                 </div>

@@ -83,6 +83,8 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 	// 处理响应和工具调用
 	toolsCalled := 0
 	var finalText strings.Builder
+	var reasoningLogs []string        // AI 的推理过程说明
+	toolCallLogs := make([]string, 0) // 工具调用记录
 	totalPromptTokens := 0
 	totalCompletionTokens := 0
 
@@ -124,6 +126,11 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 
 		// 处理工具调用
 		var toolMessages []openai.ChatCompletionMessageParamUnion
+		// 记录 AI 在调用工具前的推理说明
+		if text := strings.TrimSpace(message.Content); text != "" {
+			reasoningLogs = append(reasoningLogs, text)
+		}
+
 		for _, toolCall := range message.ToolCalls {
 			toolsCalled++
 
@@ -146,6 +153,9 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 				zap.String("function", toolCall.Function.Name),
 				zap.Any("args", args))
 
+			// 构建更清晰的工具调用记录
+			toolSummary := s.formatToolCall(toolCall.Function.Name, args)
+
 			// 执行工具函数
 			result, err := s.executeToolFunction(ctx, toolCall.Function.Name, args)
 			if err != nil {
@@ -162,6 +172,9 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 
 			// 添加工具响应消息
 			toolMessages = append(toolMessages, openai.ToolMessage(string(resultJSON), toolCall.ID))
+
+			// 记录工具调用和响应
+			toolCallLogs = append(toolCallLogs, s.formatToolCallWithResult(toolSummary, result))
 		}
 
 		// 将工具响应添加到对话历史
@@ -173,12 +186,87 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 		}
 	}
 
+	// 组装最终决策文本
+	decisionText := s.buildDecisionText(reasoningLogs, toolCallLogs, strings.TrimSpace(finalText.String()))
+
 	return &DecisionResult{
-		DecisionText:     finalText.String(),
+		DecisionText:     decisionText,
 		ToolsCalled:      toolsCalled,
 		PromptTokens:     totalPromptTokens,
 		CompletionTokens: totalCompletionTokens,
 	}, nil
+}
+
+// formatToolCall 格式化工具调用为易读的文本
+func (s *AgentService) formatToolCall(functionName string, args map[string]interface{}) string {
+	switch functionName {
+	case "openPosition":
+		symbol, _ := args["symbol"].(string)
+		side, _ := args["side"].(string)
+		leverage, _ := args["leverage"].(float64)
+		quantity, _ := args["quantity"].(float64)
+		return fmt.Sprintf("开仓 %s %s (杠杆%dx, 保证金%.2f USDT)", side, symbol, int(leverage), quantity)
+
+	case "closePosition":
+		symbol, _ := args["symbol"].(string)
+		return fmt.Sprintf("平仓 %s", symbol)
+
+	case "calculateRisk":
+		leverage, _ := args["leverage"].(float64)
+		riskPercent, _ := args["riskPercent"].(float64)
+		return fmt.Sprintf("计算风险 (杠杆%dx, 风险%.1f%%)", int(leverage), riskPercent)
+
+	default:
+		return fmt.Sprintf("调用工具 %s", functionName)
+	}
+}
+
+// formatToolCallWithResult 格式化工具调用结果
+func (s *AgentService) formatToolCallWithResult(toolSummary string, result map[string]interface{}) string {
+	// 提取关键信息
+	if msg, ok := result["message"].(string); ok && msg != "" {
+		return fmt.Sprintf("✓ %s - %s", toolSummary, msg)
+	}
+
+	if errMsg, ok := result["error"].(string); ok && errMsg != "" {
+		return fmt.Sprintf("✗ %s - 错误: %s", toolSummary, errMsg)
+	}
+
+	// 对于 calculateRisk 工具，提取建议保证金
+	if positionSize, ok := result["position_size_usdt"].(float64); ok {
+		return fmt.Sprintf("✓ %s - 建议保证金: %.2f USDT", toolSummary, positionSize)
+	}
+
+	return fmt.Sprintf("✓ %s", toolSummary)
+}
+
+// buildDecisionText 构建最终决策文本
+func (s *AgentService) buildDecisionText(reasoningLogs []string, toolCallLogs []string, finalText string) string {
+	var sections []string
+
+	// 1. AI 的推理过程
+	if len(reasoningLogs) > 0 {
+		sections = append(sections, "【决策思路】\n"+strings.Join(reasoningLogs, "\n\n"))
+	}
+
+	// 2. 工具调用记录
+	if len(toolCallLogs) > 0 {
+		sections = append(sections, "【执行操作】\n"+strings.Join(toolCallLogs, "\n"))
+	}
+
+	// 3. 最终总结
+	if finalText != "" {
+		sections = append(sections, "【决策总结】\n"+finalText)
+	} else if len(toolCallLogs) > 0 {
+		// 如果没有最终总结但有工具调用，生成简要说明
+		sections = append(sections, "【决策总结】\n已完成上述操作")
+	}
+
+	if len(sections) == 0 {
+		return "无操作"
+	}
+
+	return strings.Join(sections, "\n\n----\n\n")
 }
 
 // buildOpenAITools 构建 OpenAI 工具函数定义
@@ -186,45 +274,6 @@ func (s *AgentService) buildOpenAITools(accountMetrics *AccountMetrics) []openai
 	functionType := constant.Function("").Default()
 
 	return []openai.ChatCompletionToolParam{
-		{
-			Type: functionType,
-			Function: shared.FunctionDefinitionParam{
-				Name:        "getMarketPrice",
-				Description: openai.String("获取指定交易对的当前市场价格"),
-				Parameters: shared.FunctionParameters{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"symbol": map[string]interface{}{
-							"type":        "string",
-							"description": "交易对符号，如 BTCUSDT",
-						},
-					},
-					"required": []string{"symbol"},
-				},
-			},
-		},
-		{
-			Type: functionType,
-			Function: shared.FunctionDefinitionParam{
-				Name:        "getAccountBalance",
-				Description: openai.String("获取账户余额和未实现盈亏"),
-				Parameters: shared.FunctionParameters{
-					"type":       "object",
-					"properties": map[string]interface{}{},
-				},
-			},
-		},
-		{
-			Type: functionType,
-			Function: shared.FunctionDefinitionParam{
-				Name:        "getPositions",
-				Description: openai.String("获取当前所有持仓信息"),
-				Parameters: shared.FunctionParameters{
-					"type":       "object",
-					"properties": map[string]interface{}{},
-				},
-			},
-		},
 		{
 			Type: functionType,
 			Function: shared.FunctionDefinitionParam{
@@ -311,12 +360,6 @@ func (s *AgentService) buildOpenAITools(accountMetrics *AccountMetrics) []openai
 // executeToolFunction 执行工具函数
 func (s *AgentService) executeToolFunction(ctx context.Context, functionName string, args map[string]interface{}) (map[string]interface{}, error) {
 	switch functionName {
-	case "getMarketPrice":
-		return s.toolGetMarketPrice(ctx, args)
-	case "getAccountBalance":
-		return s.toolGetAccountBalance(ctx)
-	case "getPositions":
-		return s.toolGetPositions(ctx)
 	case "openPosition":
 		return s.toolOpenPosition(ctx, args)
 	case "closePosition":
@@ -326,68 +369,6 @@ func (s *AgentService) executeToolFunction(ctx context.Context, functionName str
 	default:
 		return nil, fmt.Errorf("unknown function: %s", functionName)
 	}
-}
-
-// toolGetMarketPrice 获取市场价格
-func (s *AgentService) toolGetMarketPrice(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
-	symbol, ok := args["symbol"].(string)
-	if !ok {
-		return nil, fmt.Errorf("invalid symbol parameter")
-	}
-
-	price, err := s.binanceClient.GetCurrentPrice(ctx, symbol)
-	if err != nil {
-		return nil, err
-	}
-
-	return map[string]interface{}{
-		"symbol": symbol,
-		"price":  price,
-	}, nil
-}
-
-// toolGetAccountBalance 获取账户余额
-func (s *AgentService) toolGetAccountBalance(ctx context.Context) (map[string]interface{}, error) {
-	accountInfo, err := s.binanceClient.GetAccountInfo(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return map[string]interface{}{
-		"total_balance":     accountInfo.TotalBalance,
-		"available_balance": accountInfo.AvailableBalance,
-		"unrealized_pnl":    accountInfo.UnrealizedPnl,
-	}, nil
-}
-
-// toolGetPositions 获取持仓
-func (s *AgentService) toolGetPositions(ctx context.Context) (map[string]interface{}, error) {
-	positions, err := s.positionService.GetAllPositions(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	positionsData := make([]map[string]interface{}, 0, len(positions))
-	for _, pos := range positions {
-		positionsData = append(positionsData, map[string]interface{}{
-			"symbol":         pos.Symbol,
-			"side":           pos.Side,
-			"quantity":       pos.Quantity,
-			"entry_price":    pos.EntryPrice,
-			"current_price":  pos.CurrentPrice,
-			"unrealized_pnl": pos.UnrealizedPnl,
-			"pnl_percent":    pos.CalculatePnlPercent(),
-			"leverage":       pos.Leverage,
-			"holding_hours":  pos.CalculateHoldingHours(),
-			"entry_reason":   pos.EntryReason,
-			"exit_plan":      pos.ExitPlan,
-		})
-	}
-
-	return map[string]interface{}{
-		"count":     len(positions),
-		"positions": positionsData,
-	}, nil
 }
 
 // toolOpenPosition 开仓

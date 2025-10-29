@@ -150,6 +150,9 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 func (s *PromptService) writeOpportunityRadar(sb *strings.Builder, marketDataMap map[string]*MarketData) {
 	sb.WriteString("## 机会雷达\n\n")
 
+	maxPositions := s.config.Trading.MaxPositions
+	sb.WriteString(fmt.Sprintf("💡 **提示**: 你可以同时持有最多 %d 个币种。发现新机会时应该**并行开仓**而非平掉现有盈利仓位。\n\n", maxPositions))
+
 	if len(marketDataMap) == 0 {
 		sb.WriteString("缺少市场数据，暂无法识别高把握机会。\n\n")
 		return
@@ -316,7 +319,7 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 	sb.WriteString(fmt.Sprintf("- 账户回撤（从峰值）: %.2f%%\n", metrics.DrawdownFromPeak))
 	sb.WriteString(fmt.Sprintf("- 账户回撤（从初始）: %.2f%%\n", metrics.DrawdownFromInitial))
 	sb.WriteString(fmt.Sprintf("- 当前总收益率: %.2f%%\n", metrics.ReturnPercent))
-	sb.WriteString(fmt.Sprintf("- 可用资金: $%.2f\n", metrics.Available))
+	sb.WriteString(fmt.Sprintf("- **可用资金: $%.2f**\n", metrics.Available))
 	sb.WriteString(fmt.Sprintf("- 未实现盈亏: $%.2f\n\n", metrics.UnrealisedPnl))
 
 	sb.WriteString("### 自主管理提醒\n")
@@ -342,10 +345,18 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 
 // writePositionInfo 写入持仓信息
 func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*models.Position) {
+	maxPositions := s.config.Trading.MaxPositions
+	currentCount := len(positions)
+
 	sb.WriteString("## 当前持仓\n\n")
 
+	if currentCount > 0 {
+		sb.WriteString(fmt.Sprintf("**持仓使用情况: %d/%d**（还可以开 %d 个新仓位）\n\n",
+			currentCount, maxPositions, maxPositions-currentCount))
+	}
+
 	if len(positions) == 0 {
-		sb.WriteString("当前无持仓。\n\n")
+		sb.WriteString(fmt.Sprintf("当前无持仓（可开最多 %d 个仓位）。\n\n", maxPositions))
 		return
 	}
 
@@ -361,8 +372,7 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 		sb.WriteString(fmt.Sprintf("- 币种: %s\n", pos.Symbol))
 		sb.WriteString(fmt.Sprintf("- 方向: %s\n", pos.Side))
 		sb.WriteString(fmt.Sprintf("- 杠杆: %dx\n", pos.Leverage))
-		sb.WriteString(fmt.Sprintf("- 盈亏百分比: %.2f%% （已考虑杠杆）\n", pnlPercent))
-		sb.WriteString(fmt.Sprintf("- 盈亏金额: $%.2f\n", pos.UnrealizedPnl))
+		sb.WriteString(fmt.Sprintf("- 未实现盈亏: $%.2f (%.2f%%)\n", pos.UnrealizedPnl, pnlPercent))
 		sb.WriteString(fmt.Sprintf("- 开仓价: $%.2f\n", pos.EntryPrice))
 		sb.WriteString(fmt.Sprintf("- 当前价: $%.2f\n", pos.CurrentPrice))
 		sb.WriteString(fmt.Sprintf("- 开仓时间: %s\n", pos.OpenedAt.Format("2006-01-02 15:04:05")))
@@ -371,25 +381,20 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 			sb.WriteString(fmt.Sprintf("- 距离参考持仓上限（%d 小时）剩余: %.1f 小时\n", maxHoldingHours, remainingHours))
 		}
 
-		if maxHoldingHours > 0 {
-			if remainingHours <= 0 {
-				sb.WriteString("- 时间提示：已超过参考持仓上限，必须制定并执行退出方案。\n")
-			} else if remainingHours < 2 {
-				sb.WriteString("- 时间提示：不足2小时到达参考持仓上限，请优先评估退出方案。\n")
-			} else if remainingHours < 4 {
-				sb.WriteString("- 时间提示：距离参考持仓上限不足4小时，请开始规划退出。\n")
-			}
-		}
-		sb.WriteString("- 执行提示：若计划平仓，请在行动方案中明确调用 `closePosition` 并说明触发条件。\n")
+		// 持仓管理提示
 		if strings.TrimSpace(pos.EntryReason) != "" {
 			sb.WriteString(fmt.Sprintf("- 开仓理由：%s\n", pos.EntryReason))
-		} else {
-			sb.WriteString("- 开仓理由：未记录，请补充入场逻辑以便后续复盘。\n")
 		}
 		if strings.TrimSpace(pos.ExitPlan) != "" {
 			sb.WriteString(fmt.Sprintf("- 退出计划：%s\n", pos.ExitPlan))
+		}
+
+		// 仅在真正需要时显示警告
+		if maxHoldingHours > 0 && remainingHours <= 0 {
+			sb.WriteString("- ⚠️ 时间警告：已超过持仓上限，需执行退出方案。\n")
 		} else {
-			sb.WriteString("- 退出计划：缺失，请补充明确的止损/止盈或退出条件。\n")
+			// 根据市场状态给出持仓建议
+			sb.WriteString("- 💡 管理建议：评估原始入场逻辑是否仍然成立。若趋势延续且无结构破坏，应继续持有让利润奔跑；若达到止损位或趋势反转，应果断平仓。\n")
 		}
 		sb.WriteString("\n")
 	}
