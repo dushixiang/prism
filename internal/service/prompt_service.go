@@ -54,8 +54,6 @@ func (s *PromptService) GeneratePrompt(ctx context.Context, data *PromptData) st
 
 	s.writeMarketOverview(&sb, data.MarketDataMap)
 
-	s.writeOpportunityRadar(&sb, data.MarketDataMap)
-
 	s.writeAccountInfo(&sb, data.AccountMetrics)
 
 	s.writePositionInfo(&sb, data.Positions)
@@ -111,11 +109,11 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 		sb.WriteString(fmt.Sprintf("### %s\n\n", symbol))
 
 		sb.WriteString(fmt.Sprintf("- 最新价格：$%.2f\n", data.CurrentPrice))
-		sb.WriteString(fmt.Sprintf("- 资金费率：%.6f%%\n\n", data.FundingRate*100))
+		sb.WriteString(fmt.Sprintf("- 资金费率：%.4f%%\n\n", data.FundingRate*100))
 
 		// 多时间框架指标
 		sb.WriteString("### 多时间框架指标\n")
-		timeframes := []string{"5m", "15m", "30m", "1h", "4h"}
+		timeframes := []string{"5m", "15m", "30m", "1h"}
 		for _, tf := range timeframes {
 			if ind, ok := data.Timeframes[tf]; ok {
 				sb.WriteString(fmt.Sprintf("**%s**: 价格=$%.2f, EMA20=$%.2f, EMA50=$%.2f, MACD=%.2f, RSI7=%.1f, RSI14=%.1f, 成交量=%.0f\n",
@@ -137,170 +135,12 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 
 		// 更长期上下文
 		if data.LongerTermData != nil {
-			sb.WriteString("### 更长期上下文（示例：1小时或4小时时间框架）\n")
+			sb.WriteString("### 1小时趋势上下文\n")
 			sb.WriteString(fmt.Sprintf("EMA20 vs EMA50: %s\n", data.LongerTermData.EMA20vsEMA50))
 			sb.WriteString(fmt.Sprintf("ATR3 vs ATR14: %s\n", data.LongerTermData.ATR3vsATR14))
 			sb.WriteString(fmt.Sprintf("成交量 vs 平均: %s\n", data.LongerTermData.VolumeVsAvg))
 			sb.WriteString("\n")
 		}
-	}
-}
-
-// writeOpportunityRadar 写入机会雷达
-func (s *PromptService) writeOpportunityRadar(sb *strings.Builder, marketDataMap map[string]*MarketData) {
-	sb.WriteString("## 机会雷达\n\n")
-
-	maxPositions := s.config.Trading.MaxPositions
-	sb.WriteString(fmt.Sprintf("💡 **提示**: 你可以同时持有最多 %d 个币种。发现新机会时应该**并行开仓**而非平掉现有盈利仓位。\n\n", maxPositions))
-
-	if len(marketDataMap) == 0 {
-		sb.WriteString("缺少市场数据，暂无法识别高把握机会。\n\n")
-		return
-	}
-
-	type opportunity struct {
-		symbol  string
-		score   int
-		reasons []string
-	}
-
-	longOpps := make([]opportunity, 0)
-	shortOpps := make([]opportunity, 0)
-
-	for symbol, data := range marketDataMap {
-		if data == nil || len(data.Timeframes) == 0 {
-			continue
-		}
-
-		var longScore int
-		var longReasons []string
-		if tf1h, ok := data.Timeframes["1h"]; ok && tf1h != nil {
-			if tf1h.RSI14 > 0 && tf1h.RSI14 <= 35 {
-				longScore += 2
-				longReasons = append(longReasons, fmt.Sprintf("1h RSI14=%.1f 显著超卖", tf1h.RSI14))
-			}
-			if tf1h.MACD > 0 && tf1h.EMA20 > tf1h.EMA50 {
-				longScore++
-				longReasons = append(longReasons, "1h EMA20>EMA50 且 MACD>0，多头动量延续")
-			}
-		}
-		if tf5m, ok := data.Timeframes["5m"]; ok && tf5m != nil {
-			if tf5m.RSI14 > 0 && tf5m.RSI14 <= 30 {
-				longScore++
-				longReasons = append(longReasons, fmt.Sprintf("5m RSI14=%.1f 极度超卖", tf5m.RSI14))
-			}
-			if tf5m.MACD > 0 && tf5m.EMA20 > tf5m.EMA50 {
-				longScore++
-				longReasons = append(longReasons, "5m 动量转多")
-			}
-		}
-		if tf15m, ok := data.Timeframes["15m"]; ok && tf15m != nil {
-			if tf15m.RSI14 > 0 && tf15m.RSI14 <= 30 {
-				longScore++
-				longReasons = append(longReasons, fmt.Sprintf("15m RSI14=%.1f 极度超卖", tf15m.RSI14))
-			}
-			if tf15m.MACD > 0 && tf15m.EMA20 > tf15m.EMA50 {
-				longScore++
-				longReasons = append(longReasons, "15m 动量由空转多")
-			}
-		}
-		if data.FundingRate < -0.0001 {
-			longScore++
-			longReasons = append(longReasons, fmt.Sprintf("资金费率 %.4f%% 偏空，潜在逼空", data.FundingRate*100))
-		}
-		if longScore > 0 {
-			longOpps = append(longOpps, opportunity{
-				symbol:  symbol,
-				score:   longScore,
-				reasons: longReasons,
-			})
-		}
-
-		var shortScore int
-		var shortReasons []string
-		if tf1h, ok := data.Timeframes["1h"]; ok && tf1h != nil {
-			if tf1h.RSI14 >= 65 {
-				shortScore += 2
-				shortReasons = append(shortReasons, fmt.Sprintf("1h RSI14=%.1f 进入过热区", tf1h.RSI14))
-			}
-			if tf1h.MACD < 0 && tf1h.EMA20 < tf1h.EMA50 {
-				shortScore++
-				shortReasons = append(shortReasons, "1h EMA20<EMA50 且 MACD<0，空头力量加强")
-			}
-		}
-		if tf5m, ok := data.Timeframes["5m"]; ok && tf5m != nil {
-			if tf5m.RSI14 >= 70 {
-				shortScore++
-				shortReasons = append(shortReasons, fmt.Sprintf("5m RSI14=%.1f 极度超买", tf5m.RSI14))
-			}
-			if tf5m.MACD < 0 && tf5m.EMA20 < tf5m.EMA50 {
-				shortScore++
-				shortReasons = append(shortReasons, "5m 动量转空")
-			}
-		}
-		if tf15m, ok := data.Timeframes["15m"]; ok && tf15m != nil {
-			if tf15m.RSI14 >= 70 {
-				shortScore++
-				shortReasons = append(shortReasons, fmt.Sprintf("15m RSI14=%.1f 极度超买", tf15m.RSI14))
-			}
-			if tf15m.MACD < 0 && tf15m.EMA20 < tf15m.EMA50 {
-				shortScore++
-				shortReasons = append(shortReasons, "15m 动量由多转空")
-			}
-		}
-		if data.FundingRate > 0.0001 {
-			shortScore++
-			shortReasons = append(shortReasons, fmt.Sprintf("资金费率 %.4f%% 偏多，回落压力大", data.FundingRate*100))
-		}
-		if shortScore > 0 {
-			shortOpps = append(shortOpps, opportunity{
-				symbol:  symbol,
-				score:   shortScore,
-				reasons: shortReasons,
-			})
-		}
-	}
-
-	sort.Slice(longOpps, func(i, j int) bool {
-		if longOpps[i].score == longOpps[j].score {
-			return longOpps[i].symbol < longOpps[j].symbol
-		}
-		return longOpps[i].score > longOpps[j].score
-	})
-
-	sort.Slice(shortOpps, func(i, j int) bool {
-		if shortOpps[i].score == shortOpps[j].score {
-			return shortOpps[i].symbol < shortOpps[j].symbol
-		}
-		return shortOpps[i].score > shortOpps[j].score
-	})
-
-	maxItems := func(listLen int) int {
-		if listLen > 3 {
-			return 3
-		}
-		return listLen
-	}
-
-	if len(longOpps) == 0 {
-		sb.WriteString("- 当前未识别到高质量的多头候选，耐心等待更明确的共振信号。\n")
-	} else {
-		sb.WriteString("**多头候选（排序按共振强度）**\n")
-		for _, opp := range longOpps[:maxItems(len(longOpps))] {
-			sb.WriteString(fmt.Sprintf("- %s（评分 %d）：%s\n", opp.symbol, opp.score, strings.Join(opp.reasons, "；")))
-		}
-	}
-
-	sb.WriteString("\n")
-
-	if len(shortOpps) == 0 {
-		sb.WriteString("- 当前未识别到高质量的空头候选，可等待价格反弹或结构破坏。\n\n")
-	} else {
-		sb.WriteString("**空头候选（排序按共振强度）**\n")
-		for _, opp := range shortOpps[:maxItems(len(shortOpps))] {
-			sb.WriteString(fmt.Sprintf("- %s（评分 %d）：%s\n", opp.symbol, opp.score, strings.Join(opp.reasons, "；")))
-		}
-		sb.WriteString("\n")
 	}
 }
 
@@ -333,12 +173,11 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 	sb.WriteString("## 当前持仓\n\n")
 
 	if currentCount > 0 {
-		sb.WriteString(fmt.Sprintf("**持仓使用情况: %d/%d**（还可以开 %d 个新仓位）\n\n",
-			currentCount, maxPositions, maxPositions-currentCount))
+		sb.WriteString(fmt.Sprintf("**持仓: %d/%d**\n\n", currentCount, maxPositions))
 	}
 
 	if len(positions) == 0 {
-		sb.WriteString(fmt.Sprintf("当前无持仓（可开最多 %d 个仓位）。\n\n", maxPositions))
+		sb.WriteString(fmt.Sprintf("当前无持仓，最多可开 %d 个仓位\n\n", maxPositions))
 		return
 	}
 
@@ -355,20 +194,13 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 		sb.WriteString(fmt.Sprintf("- 方向: %s\n", pos.Side))
 		sb.WriteString(fmt.Sprintf("- 杠杆: %dx\n", pos.Leverage))
 
-		// 强调实际盈亏金额，淡化百分比
-		pnlStatus := "持平"
-		if pos.UnrealizedPnl > 0.5 {
-			pnlStatus = "盈利"
-		} else if pos.UnrealizedPnl < -0.5 {
-			pnlStatus = "浮亏"
-		}
-		sb.WriteString(fmt.Sprintf("- **实际盈亏: $%.2f** (%s，杠杆后百分比 %.2f%% 仅供参考)\n", pos.UnrealizedPnl, pnlStatus, pnlPercent))
+		sb.WriteString(fmt.Sprintf("- 未实现盈亏: $%.2f (%.2f%%)\n", pos.UnrealizedPnl, pnlPercent))
 		sb.WriteString(fmt.Sprintf("- 开仓价: $%.2f\n", pos.EntryPrice))
 		sb.WriteString(fmt.Sprintf("- 当前价: $%.2f\n", pos.CurrentPrice))
 		sb.WriteString(fmt.Sprintf("- 开仓时间: %s\n", pos.OpenedAt.Format("2006-01-02 15:04:05")))
 		sb.WriteString(fmt.Sprintf("- 已持仓: %.1f 小时 / %d 个周期\n", holdingHours, holdingCycles))
 		if maxHoldingHours > 0 {
-			sb.WriteString(fmt.Sprintf("- 距离参考持仓上限（%d 小时）剩余: %.1f 小时\n", maxHoldingHours, remainingHours))
+			sb.WriteString(fmt.Sprintf("- 持仓上限 %d 小时，剩余 %.1f 小时\n", maxHoldingHours, remainingHours))
 		}
 
 		// 持仓管理提示
@@ -381,72 +213,11 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 
 		// 时间警告
 		if maxHoldingHours > 0 && remainingHours <= 0 {
-			sb.WriteString("- ⚠️ 时间警告：已超过持仓上限，需执行退出方案\n")
+			sb.WriteString("- ⚠️ 时间警告：已超过持仓上限\n")
 		}
 
-		sb.WriteString("\n**持仓决策指引**：\n")
-		sb.WriteString("- 继续持有条件：原始入场逻辑仍成立 + 更大级别趋势完好 + 未有效破位\n")
-		sb.WriteString("- 平仓条件：趋势反转确认（更大级别） + 有效破位 + 无反弹迹象\n")
-		sb.WriteString("- ❌ 不要因为：小幅浮亏、触及支撑、5m/15m 转弱、RSI 回调等**正常波动**而平仓\n")
 		sb.WriteString("\n")
 	}
-
-	// 添加仓位计算指引
-	s.writePositionSizeGuidance(sb, positions)
-}
-
-// writePositionSizeGuidance 写入仓位计算指引
-func (s *PromptService) writePositionSizeGuidance(sb *strings.Builder, positions []*models.Position) {
-	maxPositions := s.config.Trading.MaxPositions
-	currentCount := len(positions)
-	remainingSlots := maxPositions - currentCount
-
-	if remainingSlots <= 0 {
-		return // 已满，不需要显示
-	}
-
-	sb.WriteString("## 仓位计算指引\n\n")
-	sb.WriteString("**重要**：开仓时的 `quantity` 参数是指**保证金金额（USDT）**，不是币的数量。\n\n")
-
-	sb.WriteString("### 仓位大小计算公式\n\n")
-	sb.WriteString("根据以下两种方法计算，并取**较小值**（更保守）：\n\n")
-
-	sb.WriteString("**方法1：资金平均分配法**\n")
-	sb.WriteString("```\n")
-	sb.WriteString(fmt.Sprintf("可用资金平均值 = 可用资金 ÷ 剩余仓位数 ÷ 1.25\n"))
-	sb.WriteString(fmt.Sprintf("建议保证金 = 可用资金平均值 × 0.8（保留20%%缓冲）\n"))
-	sb.WriteString("```\n\n")
-
-	sb.WriteString("**方法2：风险百分比法**\n")
-	sb.WriteString("```\n")
-	sb.WriteString("风险金额 = 账户价值 × 风险百分比（通常2-3%）\n")
-	sb.WriteString("建议保证金 = 风险金额 ÷ (止损百分比 × 杠杆)\n")
-	sb.WriteString("\n")
-	sb.WriteString("止损百分比根据杠杆：\n")
-	sb.WriteString("- 杠杆 >= 12x: 止损 3%\n")
-	sb.WriteString("- 杠杆 >= 8x:  止损 4%\n")
-	sb.WriteString("- 杠杆 < 8x:   止损 5%\n")
-	sb.WriteString("```\n\n")
-
-	sb.WriteString("### 约束条件\n")
-	sb.WriteString("- 最小保证金：5 USDT（币安最低要求）\n")
-	sb.WriteString("- 最大保证金：可用资金的 90%\n")
-	sb.WriteString("- 实际开仓价值 = 保证金 × 杠杆\n\n")
-
-	sb.WriteString("### 示例\n")
-	sb.WriteString("假设：可用资金 $60，剩余 2 个仓位，计划使用 10x 杠杆，风险 2.5%，账户价值 $100\n\n")
-	sb.WriteString("**方法1计算**：\n")
-	sb.WriteString("```\n")
-	sb.WriteString("平均值 = 60 ÷ 2 ÷ 1.25 = 24 USDT\n")
-	sb.WriteString("建议保证金 = 24 × 0.8 = 19.2 USDT\n")
-	sb.WriteString("```\n\n")
-	sb.WriteString("**方法2计算**：\n")
-	sb.WriteString("```\n")
-	sb.WriteString("风险金额 = 100 × 2.5% = 2.5 USDT\n")
-	sb.WriteString("建议保证金 = 2.5 ÷ (5% × 10) = 2.5 ÷ 0.5 = 5 USDT\n")
-	sb.WriteString("```\n\n")
-	sb.WriteString("**取较小值**：5 USDT（更保守）\n\n")
-	sb.WriteString("**实际效果**：开仓价值 = 5 × 10 = 50 USDT\n\n")
 }
 
 // writeTradeHistory 写入交易历史
@@ -476,11 +247,9 @@ func (s *PromptService) writeDecisionHistory(sb *strings.Builder, decisions []*m
 	sb.WriteString("## 历史AI决策（最近3次）\n\n")
 
 	if len(decisions) == 0 {
-		sb.WriteString("暂无历史决策。\n\n")
+		sb.WriteString("暂无历史决策\n\n")
 		return
 	}
-
-	sb.WriteString("回顾以下记录，评估哪些策略仍然有效，哪些需要调整。\n\n")
 
 	for i, decision := range decisions {
 		sb.WriteString(fmt.Sprintf("### 决策 #%d\n", i+1))

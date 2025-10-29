@@ -15,7 +15,7 @@ func NewIndicatorService() *IndicatorService {
 
 // TimeframeIndicators 单个时间框架的指标
 type TimeframeIndicators struct {
-	Timeframe  string  `json:"timeframe"` // 5m/15m/30m/1h/4h
+	Timeframe  string  `json:"timeframe"` // 5m/15m/30m/1h
 	Price      float64 `json:"price"`
 	EMA20      float64 `json:"ema20"`
 	EMA50      float64 `json:"ema50"`

@@ -92,15 +92,15 @@ func (s *TradingAccountService) GetAccountMetrics(ctx context.Context) (*Account
 		returnPercent = (totalBalance - initialBalance) / initialBalance * 100
 	}
 
-	// 计算回撤
+	// 计算回撤（返回负数表示下跌）
 	drawdownFromPeak := 0.0
 	if peakBalance > 0 {
-		drawdownFromPeak = (peakBalance - totalBalance) / peakBalance * 100
+		drawdownFromPeak = (totalBalance - peakBalance) / peakBalance * 100
 	}
 
 	drawdownFromInitial := 0.0
 	if initialBalance > 0 && totalBalance < initialBalance {
-		drawdownFromInitial = (initialBalance - totalBalance) / initialBalance * 100
+		drawdownFromInitial = (totalBalance - initialBalance) / initialBalance * 100
 	}
 
 	// 计算Sharpe Ratio
@@ -198,19 +198,4 @@ func (s *TradingAccountService) CheckStopLoss(metrics *AccountMetrics, stopLossU
 // CheckTakeProfit 检查账户止盈线
 func (s *TradingAccountService) CheckTakeProfit(metrics *AccountMetrics, takeProfitUSDT float64) bool {
 	return metrics.TotalBalance >= takeProfitUSDT
-}
-
-// GetAccountWarnings 获取账户警告信息
-func (s *TradingAccountService) GetAccountWarnings(metrics *AccountMetrics) []string {
-	warnings := make([]string, 0)
-
-	if metrics.DrawdownFromPeak >= 20 {
-		warnings = append(warnings, "🚨 严重警告：回撤≥20%，必须立即平仓所有持仓并停止交易")
-	} else if metrics.DrawdownFromPeak >= 15 {
-		warnings = append(warnings, "⚠️ 警告：回撤≥15%，已触发风控保护，禁止新开仓")
-	} else if metrics.DrawdownFromPeak >= 10 {
-		warnings = append(warnings, "⚠️ 提醒：回撤≥10%，请谨慎交易")
-	}
-
-	return warnings
 }

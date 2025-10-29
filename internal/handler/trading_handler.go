@@ -108,9 +108,6 @@ func (h *TradingHandler) GetAccount(c echo.Context) error {
 		})
 	}
 
-	// 获取账户警告
-	warnings := h.accountService.GetAccountWarnings(accountMetrics)
-
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"total_balance":         accountMetrics.TotalBalance,
 		"available":             accountMetrics.Available,
@@ -121,7 +118,6 @@ func (h *TradingHandler) GetAccount(c echo.Context) error {
 		"drawdown_from_peak":    accountMetrics.DrawdownFromPeak,
 		"drawdown_from_initial": accountMetrics.DrawdownFromInitial,
 		"sharpe_ratio":          accountMetrics.SharpeRatio,
-		"warnings":              warnings,
 	})
 }
 

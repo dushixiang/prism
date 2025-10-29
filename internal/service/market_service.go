@@ -65,7 +65,6 @@ func (s *MarketService) CollectMarketData(ctx context.Context, symbol string) (*
 		{"15m", "15m", 96},
 		{"30m", "30m", 90},
 		{"1h", "1h", 120},
-		{"4h", "4h", 180},
 	}
 
 	marketData := &MarketData{

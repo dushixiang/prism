@@ -67,6 +67,12 @@ type DecisionResult struct {
 	CompletionTokens int    `json:"completion_tokens"`
 }
 
+// DecisionRound 决策轮次记录
+type DecisionRound struct {
+	Reasoning string   // AI的思考过程
+	ToolCalls []string // 本轮调用的工具
+}
+
 // ExecuteDecision 执行AI决策
 func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions string, prompt string, accountMetrics *AccountMetrics) (*DecisionResult, error) {
 	s.logger.Info("executing LLM decision")
@@ -82,9 +88,8 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 
 	// 处理响应和工具调用
 	toolsCalled := 0
-	var finalText strings.Builder
-	var reasoningLogs []string        // AI 的推理过程说明
-	toolCallLogs := make([]string, 0) // 工具调用记录
+	var finalText string
+	var rounds []DecisionRound
 	totalPromptTokens := 0
 	totalCompletionTokens := 0
 
@@ -92,7 +97,7 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 	for iteration := 0; iteration < maxIterations; iteration++ {
 		// 调用 OpenAI API
 		resp, err := s.openAIClient.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-			Model:    shared.ChatModel(s.model),
+			Model:    s.model,
 			Messages: messages,
 			Tools:    tools,
 		})
@@ -119,17 +124,19 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 		if len(message.ToolCalls) == 0 {
 			// 没有工具调用，获取最终文本并结束
 			if message.Content != "" {
-				finalText.WriteString(message.Content)
+				finalText = strings.TrimSpace(message.Content)
 			}
 			break
 		}
 
+		// 创建本轮记录
+		currentRound := DecisionRound{
+			Reasoning: strings.TrimSpace(message.Content),
+			ToolCalls: make([]string, 0),
+		}
+
 		// 处理工具调用
 		var toolMessages []openai.ChatCompletionMessageParamUnion
-		// 记录 AI 在调用工具前的推理说明
-		if text := strings.TrimSpace(message.Content); text != "" {
-			reasoningLogs = append(reasoningLogs, text)
-		}
 
 		for _, toolCall := range message.ToolCalls {
 			toolsCalled++
@@ -146,6 +153,11 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 				}
 				resultJSON, _ := json.Marshal(result)
 				toolMessages = append(toolMessages, openai.ToolMessage(toolCall.ID, string(resultJSON)))
+
+				// 记录错误的工具调用
+				toolSummary := s.formatToolCall(toolCall.Function.Name, args)
+				currentRound.ToolCalls = append(currentRound.ToolCalls,
+					fmt.Sprintf("✗ %s - 错误: 参数解析失败", toolSummary))
 				continue
 			}
 
@@ -173,9 +185,12 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 			// 添加工具响应消息
 			toolMessages = append(toolMessages, openai.ToolMessage(string(resultJSON), toolCall.ID))
 
-			// 记录工具调用和响应
-			toolCallLogs = append(toolCallLogs, s.formatToolCallWithResult(toolSummary, result))
+			// 记录工具调用和响应到当前轮次
+			currentRound.ToolCalls = append(currentRound.ToolCalls, s.formatToolCallWithResult(toolSummary, result))
 		}
+
+		// 保存本轮记录
+		rounds = append(rounds, currentRound)
 
 		// 将工具响应添加到对话历史
 		messages = append(messages, toolMessages...)
@@ -187,7 +202,7 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 	}
 
 	// 组装最终决策文本
-	decisionText := s.buildDecisionText(reasoningLogs, toolCallLogs, strings.TrimSpace(finalText.String()))
+	decisionText := s.buildDecisionText(rounds, finalText)
 
 	return &DecisionResult{
 		DecisionText:     decisionText,
@@ -230,25 +245,41 @@ func (s *AgentService) formatToolCallWithResult(toolSummary string, result map[s
 	return fmt.Sprintf("✓ %s", toolSummary)
 }
 
-// buildDecisionText 构建最终决策文本
-func (s *AgentService) buildDecisionText(reasoningLogs []string, toolCallLogs []string, finalText string) string {
+// buildDecisionText 构建最终决策文本（按时间顺序）
+func (s *AgentService) buildDecisionText(rounds []DecisionRound, finalText string) string {
 	var sections []string
 
-	// 1. AI 的推理过程
-	if len(reasoningLogs) > 0 {
-		sections = append(sections, "【决策思路】\n"+strings.Join(reasoningLogs, "\n\n"))
+	// 按顺序输出每一轮的思考和操作
+	for i, round := range rounds {
+		var roundContent strings.Builder
+
+		// 先写轮次标题
+		roundContent.WriteString(fmt.Sprintf("【第%d轮】\n", i+1))
+
+		// 本轮的思考
+		if round.Reasoning != "" {
+			roundContent.WriteString("**思考**\n")
+			roundContent.WriteString(round.Reasoning)
+			roundContent.WriteString("\n\n")
+		}
+
+		// 本轮的操作
+		if len(round.ToolCalls) > 0 {
+			roundContent.WriteString("**操作**\n")
+			for _, toolCall := range round.ToolCalls {
+				roundContent.WriteString(toolCall)
+				roundContent.WriteString("\n")
+			}
+		}
+
+		sections = append(sections, roundContent.String())
 	}
 
-	// 2. 工具调用记录
-	if len(toolCallLogs) > 0 {
-		sections = append(sections, "【执行操作】\n"+strings.Join(toolCallLogs, "\n"))
-	}
-
-	// 3. 最终总结
+	// 最终总结
 	if finalText != "" {
 		sections = append(sections, "【决策总结】\n"+finalText)
-	} else if len(toolCallLogs) > 0 {
-		// 如果没有最终总结但有工具调用，生成简要说明
+	} else if len(rounds) > 0 {
+		// 如果没有最终总结但有操作，生成简要说明
 		sections = append(sections, "【决策总结】\n已完成上述操作")
 	}
 
@@ -256,7 +287,7 @@ func (s *AgentService) buildDecisionText(reasoningLogs []string, toolCallLogs []
 		return "无操作"
 	}
 
-	return strings.Join(sections, "\n\n----\n\n")
+	return strings.Join(sections, "\n\n")
 }
 
 // buildOpenAITools 构建 OpenAI 工具函数定义

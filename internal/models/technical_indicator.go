@@ -11,7 +11,7 @@ import (
 type TechnicalIndicator struct {
 	ID          string  `gorm:"primaryKey;type:varchar(26)" json:"id"`
 	Symbol      string  `gorm:"type:varchar(20);not null;index:idx_symbol_timeframe_time" json:"symbol"`    // 交易对
-	Timeframe   string  `gorm:"type:varchar(10);not null;index:idx_symbol_timeframe_time" json:"timeframe"` // 时间框架：1m/3m/5m/15m/30m/1h/4h
+	Timeframe   string  `gorm:"type:varchar(10);not null;index:idx_symbol_timeframe_time" json:"timeframe"` // 时间框架：1m/3m/5m/15m/30m/1h
 	Price       float64 `gorm:"type:decimal(20,8)" json:"price"`                                            // 当前价格
 	EMA20       float64 `gorm:"type:decimal(20,8)" json:"ema20"`                                            // EMA20
 	EMA50       float64 `gorm:"type:decimal(20,8)" json:"ema50"`                                            // EMA50
