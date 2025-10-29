@@ -320,26 +320,8 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 	sb.WriteString(fmt.Sprintf("- 账户回撤（从初始）: %.2f%%\n", metrics.DrawdownFromInitial))
 	sb.WriteString(fmt.Sprintf("- 当前总收益率: %.2f%%\n", metrics.ReturnPercent))
 	sb.WriteString(fmt.Sprintf("- **可用资金: $%.2f**\n", metrics.Available))
-	sb.WriteString(fmt.Sprintf("- 未实现盈亏: $%.2f\n\n", metrics.UnrealisedPnl))
+	sb.WriteString(fmt.Sprintf("- 未实现盈亏: $%.2f\n", metrics.UnrealisedPnl))
 
-	sb.WriteString("### 自主管理提醒\n")
-	sb.WriteString("- 后端不会自动触发止损、止盈或强制平仓，请根据纪律自行调用工具执行。\n")
-
-	//tc := s.config.Trading
-	//maxDrawdown := tc.MaxDrawdownPercent
-	//if maxDrawdown > 0 {
-	//	forcedFlat := maxDrawdown + 5
-	//	switch {
-	//	case metrics.DrawdownFromPeak >= forcedFlat:
-	//		sb.WriteString(fmt.Sprintf("- 回撤已达 %.2f%%（高于参考强平线 %.2f%%），必须制定并执行全仓退出计划。\n", metrics.DrawdownFromPeak, forcedFlat))
-	//	case metrics.DrawdownFromPeak >= maxDrawdown:
-	//		sb.WriteString(fmt.Sprintf("- 回撤 %.2f%% ≥ 参考阈值 %.2f%%，暂停新开仓，先处理存量风险。\n", metrics.DrawdownFromPeak, maxDrawdown))
-	//	default:
-	//		sb.WriteString(fmt.Sprintf("- 回撤 %.2f%% 低于参考阈值 %.2f%%，可继续谨慎评估机会。\n", metrics.DrawdownFromPeak, maxDrawdown))
-	//	}
-	//} else {
-	//	sb.WriteString("- 配置未提供回撤阈值，请自行定义并严格执行风控纪律。\n")
-	//}
 	sb.WriteString("\n")
 }
 
@@ -372,7 +354,15 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 		sb.WriteString(fmt.Sprintf("- 币种: %s\n", pos.Symbol))
 		sb.WriteString(fmt.Sprintf("- 方向: %s\n", pos.Side))
 		sb.WriteString(fmt.Sprintf("- 杠杆: %dx\n", pos.Leverage))
-		sb.WriteString(fmt.Sprintf("- 未实现盈亏: $%.2f (%.2f%%)\n", pos.UnrealizedPnl, pnlPercent))
+
+		// 强调实际盈亏金额，淡化百分比
+		pnlStatus := "持平"
+		if pos.UnrealizedPnl > 0.5 {
+			pnlStatus = "盈利"
+		} else if pos.UnrealizedPnl < -0.5 {
+			pnlStatus = "浮亏"
+		}
+		sb.WriteString(fmt.Sprintf("- **实际盈亏: $%.2f** (%s，杠杆后百分比 %.2f%% 仅供参考)\n", pos.UnrealizedPnl, pnlStatus, pnlPercent))
 		sb.WriteString(fmt.Sprintf("- 开仓价: $%.2f\n", pos.EntryPrice))
 		sb.WriteString(fmt.Sprintf("- 当前价: $%.2f\n", pos.CurrentPrice))
 		sb.WriteString(fmt.Sprintf("- 开仓时间: %s\n", pos.OpenedAt.Format("2006-01-02 15:04:05")))
@@ -389,15 +379,74 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 			sb.WriteString(fmt.Sprintf("- 退出计划：%s\n", pos.ExitPlan))
 		}
 
-		// 仅在真正需要时显示警告
+		// 时间警告
 		if maxHoldingHours > 0 && remainingHours <= 0 {
-			sb.WriteString("- ⚠️ 时间警告：已超过持仓上限，需执行退出方案。\n")
-		} else {
-			// 根据市场状态给出持仓建议
-			sb.WriteString("- 💡 管理建议：评估原始入场逻辑是否仍然成立。若趋势延续且无结构破坏，应继续持有让利润奔跑；若达到止损位或趋势反转，应果断平仓。\n")
+			sb.WriteString("- ⚠️ 时间警告：已超过持仓上限，需执行退出方案\n")
 		}
+
+		sb.WriteString("\n**持仓决策指引**：\n")
+		sb.WriteString("- 继续持有条件：原始入场逻辑仍成立 + 更大级别趋势完好 + 未有效破位\n")
+		sb.WriteString("- 平仓条件：趋势反转确认（更大级别） + 有效破位 + 无反弹迹象\n")
+		sb.WriteString("- ❌ 不要因为：小幅浮亏、触及支撑、5m/15m 转弱、RSI 回调等**正常波动**而平仓\n")
 		sb.WriteString("\n")
 	}
+
+	// 添加仓位计算指引
+	s.writePositionSizeGuidance(sb, positions)
+}
+
+// writePositionSizeGuidance 写入仓位计算指引
+func (s *PromptService) writePositionSizeGuidance(sb *strings.Builder, positions []*models.Position) {
+	maxPositions := s.config.Trading.MaxPositions
+	currentCount := len(positions)
+	remainingSlots := maxPositions - currentCount
+
+	if remainingSlots <= 0 {
+		return // 已满，不需要显示
+	}
+
+	sb.WriteString("## 仓位计算指引\n\n")
+	sb.WriteString("**重要**：开仓时的 `quantity` 参数是指**保证金金额（USDT）**，不是币的数量。\n\n")
+
+	sb.WriteString("### 仓位大小计算公式\n\n")
+	sb.WriteString("根据以下两种方法计算，并取**较小值**（更保守）：\n\n")
+
+	sb.WriteString("**方法1：资金平均分配法**\n")
+	sb.WriteString("```\n")
+	sb.WriteString(fmt.Sprintf("可用资金平均值 = 可用资金 ÷ 剩余仓位数 ÷ 1.25\n"))
+	sb.WriteString(fmt.Sprintf("建议保证金 = 可用资金平均值 × 0.8（保留20%%缓冲）\n"))
+	sb.WriteString("```\n\n")
+
+	sb.WriteString("**方法2：风险百分比法**\n")
+	sb.WriteString("```\n")
+	sb.WriteString("风险金额 = 账户价值 × 风险百分比（通常2-3%）\n")
+	sb.WriteString("建议保证金 = 风险金额 ÷ (止损百分比 × 杠杆)\n")
+	sb.WriteString("\n")
+	sb.WriteString("止损百分比根据杠杆：\n")
+	sb.WriteString("- 杠杆 >= 12x: 止损 3%\n")
+	sb.WriteString("- 杠杆 >= 8x:  止损 4%\n")
+	sb.WriteString("- 杠杆 < 8x:   止损 5%\n")
+	sb.WriteString("```\n\n")
+
+	sb.WriteString("### 约束条件\n")
+	sb.WriteString("- 最小保证金：5 USDT（币安最低要求）\n")
+	sb.WriteString("- 最大保证金：可用资金的 90%\n")
+	sb.WriteString("- 实际开仓价值 = 保证金 × 杠杆\n\n")
+
+	sb.WriteString("### 示例\n")
+	sb.WriteString("假设：可用资金 $60，剩余 2 个仓位，计划使用 10x 杠杆，风险 2.5%，账户价值 $100\n\n")
+	sb.WriteString("**方法1计算**：\n")
+	sb.WriteString("```\n")
+	sb.WriteString("平均值 = 60 ÷ 2 ÷ 1.25 = 24 USDT\n")
+	sb.WriteString("建议保证金 = 24 × 0.8 = 19.2 USDT\n")
+	sb.WriteString("```\n\n")
+	sb.WriteString("**方法2计算**：\n")
+	sb.WriteString("```\n")
+	sb.WriteString("风险金额 = 100 × 2.5% = 2.5 USDT\n")
+	sb.WriteString("建议保证金 = 2.5 ÷ (5% × 10) = 2.5 ÷ 0.5 = 5 USDT\n")
+	sb.WriteString("```\n\n")
+	sb.WriteString("**取较小值**：5 USDT（更保守）\n\n")
+	sb.WriteString("**实际效果**：开仓价值 = 5 × 10 = 50 USDT\n\n")
 }
 
 // writeTradeHistory 写入交易历史

@@ -211,11 +211,6 @@ func (s *AgentService) formatToolCall(functionName string, args map[string]inter
 		symbol, _ := args["symbol"].(string)
 		return fmt.Sprintf("平仓 %s", symbol)
 
-	case "calculateRisk":
-		leverage, _ := args["leverage"].(float64)
-		riskPercent, _ := args["riskPercent"].(float64)
-		return fmt.Sprintf("计算风险 (杠杆%dx, 风险%.1f%%)", int(leverage), riskPercent)
-
 	default:
 		return fmt.Sprintf("调用工具 %s", functionName)
 	}
@@ -230,11 +225,6 @@ func (s *AgentService) formatToolCallWithResult(toolSummary string, result map[s
 
 	if errMsg, ok := result["error"].(string); ok && errMsg != "" {
 		return fmt.Sprintf("✗ %s - 错误: %s", toolSummary, errMsg)
-	}
-
-	// 对于 calculateRisk 工具，提取建议保证金
-	if positionSize, ok := result["position_size_usdt"].(float64); ok {
-		return fmt.Sprintf("✓ %s - 建议保证金: %.2f USDT", toolSummary, positionSize)
 	}
 
 	return fmt.Sprintf("✓ %s", toolSummary)
@@ -333,27 +323,6 @@ func (s *AgentService) buildOpenAITools(accountMetrics *AccountMetrics) []openai
 				},
 			},
 		},
-		{
-			Type: functionType,
-			Function: shared.FunctionDefinitionParam{
-				Name:        "calculateRisk",
-				Description: openai.String("计算建议的保证金大小。返回的 position_size_usdt 就是应该传给 openPosition 的 quantity 参数值"),
-				Parameters: shared.FunctionParameters{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"leverage": map[string]interface{}{
-							"type":        "integer",
-							"description": "计划使用的杠杆倍数",
-						},
-						"riskPercent": map[string]interface{}{
-							"type":        "number",
-							"description": "单笔交易风险百分比（2-3%）",
-						},
-					},
-					"required": []string{"leverage", "riskPercent"},
-				},
-			},
-		},
 	}
 }
 
@@ -364,8 +333,6 @@ func (s *AgentService) executeToolFunction(ctx context.Context, functionName str
 		return s.toolOpenPosition(ctx, args)
 	case "closePosition":
 		return s.toolClosePosition(ctx, args)
-	case "calculateRisk":
-		return s.toolCalculateRisk(ctx, args)
 	default:
 		return nil, fmt.Errorf("unknown function: %s", functionName)
 	}
@@ -605,46 +572,6 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 		"symbol":   symbol,
 		"pnl":      pnl,
 		"message":  fmt.Sprintf("成功平仓 %s，盈亏 $%.2f", symbol, pnl),
-	}, nil
-}
-
-// toolCalculateRisk 计算风险和仓位
-func (s *AgentService) toolCalculateRisk(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
-	leverageFloat, _ := args["leverage"].(float64)
-	leverage := int(leverageFloat)
-	riskPercent, _ := args["riskPercent"].(float64)
-
-	// 获取账户信息
-	accountInfo, err := s.binanceClient.GetAccountInfo(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	accountValue := accountInfo.TotalBalance - accountInfo.UnrealizedPnl
-
-	// 计算仓位大小
-	positionSize := s.calculatePositionSize(accountValue, riskPercent, leverage, 0)
-
-	// 计算止损百分比
-	stopLossPercent := s.stopLossPercentForLeverage(leverage)
-
-	// 确保仓位大小至少为 5 USDT
-	if positionSize < 5 {
-		positionSize = 5
-	}
-
-	notionalValue := positionSize * float64(leverage)
-
-	return map[string]interface{}{
-		"account_value":       accountValue,
-		"risk_percent":        riskPercent,
-		"leverage":            leverage,
-		"position_size_usdt":  positionSize,
-		"notional_value_usdt": notionalValue,
-		"stop_loss_percent":   stopLossPercent,
-		"max_loss_usdt":       accountValue * riskPercent / 100,
-		"recommendation":      fmt.Sprintf("建议使用保证金 %.2f USDT，杠杆 %dx，实际开仓价值 %.2f USDT", positionSize, leverage, notionalValue),
-		"usage_instruction":   fmt.Sprintf("请将 position_size_usdt (%.2f) 作为 openPosition 的 quantity 参数", positionSize),
 	}, nil
 }
 
