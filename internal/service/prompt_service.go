@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -466,8 +465,6 @@ func (s *PromptService) GetSystemInstructions() string {
 		return str
 	}
 
-	lowRange, midRange, highRange := leverageBands(tc.MinLeverage, tc.MaxLeverage)
-
 	replacements := map[string]interface{}{
 		"minutes_elapsed":        "{{minutes_elapsed}}",
 		"current_time":           "{{current_time}}",
@@ -477,35 +474,10 @@ func (s *PromptService) GetSystemInstructions() string {
 		"max_holding_hours":      fmt.Sprintf("%d", tc.MaxHoldingHours),
 		"max_positions":          fmt.Sprintf("%d", tc.MaxPositions),
 		"risk_percent_per_trade": formatFloat(tc.RiskPercentPerTrade),
-		"low_leverage_range":     lowRange,
-		"mid_leverage_range":     midRange,
-		"high_leverage_range":    highRange,
+		"min_leverage":           fmt.Sprintf("%d", tc.MinLeverage),
+		"max_leverage":           fmt.Sprintf("%d", tc.MaxLeverage),
 	}
 
 	tmpl := fasttemplate.New(systemInstructionsTemplate, "{{", "}}")
 	return tmpl.ExecuteString(replacements)
-}
-
-func leverageBands(minLev, maxLev int) (string, string, string) {
-	if minLev >= maxLev {
-		rangeStr := fmt.Sprintf("%d", minLev)
-		return rangeStr, rangeStr, rangeStr
-	}
-
-	span := maxLev - minLev
-	lowEnd := minLev + int(math.Ceil(float64(span)/3))
-	midEnd := minLev + int(math.Ceil(float64(span)*2/3))
-
-	if lowEnd > maxLev {
-		lowEnd = maxLev
-	}
-	if midEnd > maxLev {
-		midEnd = maxLev
-	}
-
-	lowRange := fmt.Sprintf("%d-%d", minLev, lowEnd)
-	midRange := fmt.Sprintf("%d-%d", lowEnd, midEnd)
-	highRange := fmt.Sprintf("%d-%d", midEnd, maxLev)
-
-	return lowRange, midRange, highRange
 }
