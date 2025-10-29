@@ -99,13 +99,6 @@ func (t *TradingLoop) Start(ctx context.Context) error {
 	// 启动 cron 调度器
 	t.cron.Start()
 
-	// 立即执行第一次
-	go func() {
-		if err := t.ExecuteCycle(context.Background()); err != nil {
-			t.logger.Error("first cycle execution failed", zap.Error(err))
-		}
-	}()
-
 	// 等待停止信号
 	select {
 	case <-t.stopChan:
