@@ -120,8 +120,12 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 		timeframes := []string{"15m", "30m", "1h"}
 		for _, tf := range timeframes {
 			if ind, ok := data.Timeframes[tf]; ok {
-				sb.WriteString(fmt.Sprintf("- %s: 价格$%.2f | EMA20/50: $%.2f/$%.2f | MACD=%.2f | RSI=%.1f/%.1f | Volume=%.0f\n",
-					tf, ind.Price, ind.EMA20, ind.EMA50, ind.MACD, ind.RSI7, ind.RSI14, ind.Volume))
+				sb.WriteString(fmt.Sprintf("- %s: 价格$%.2f | EMA20/50: $%.2f/$%.2f | MACD=%.2f(信号%.2f,柱%.2f) | RSI7/14=%.1f/%.1f | ATR3/14=%.2f/%.2f | 成交量=%.0f(均%.0f)\n",
+					tf, ind.Price, ind.EMA20, ind.EMA50,
+					ind.MACD, ind.MACDSignal, ind.MACDHist,
+					ind.RSI7, ind.RSI14,
+					ind.ATR3, ind.ATR14,
+					ind.Volume, ind.AvgVolume))
 			}
 		}
 		sb.WriteString("\n")
@@ -141,10 +145,21 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 		// 1小时趋势
 		if data.LongerTermData != nil {
 			sb.WriteString("**1小时趋势**\n")
-			sb.WriteString(fmt.Sprintf("- EMA20 vs EMA50: %s | ATR: %s | 成交量: %s\n\n",
+			sb.WriteString(fmt.Sprintf("- EMA20 vs EMA50: %s | ATR3 vs ATR14: %s | 成交量 vs 均值: %s\n",
 				data.LongerTermData.EMA20vsEMA50,
 				data.LongerTermData.ATR3vsATR14,
 				data.LongerTermData.VolumeVsAvg))
+
+			// 1小时序列数据（最近10点）
+			if len(data.LongerTermData.MACDSeries) > 0 || len(data.LongerTermData.RSI14Series) > 0 {
+				sb.WriteString("- MACD序列: ")
+				sb.WriteString(formatFloatArray(data.LongerTermData.MACDSeries))
+				sb.WriteString("\n")
+				sb.WriteString("- RSI14序列: ")
+				sb.WriteString(formatFloatArray(data.LongerTermData.RSI14Series))
+				sb.WriteString("\n")
+			}
+			sb.WriteString("\n")
 		}
 	}
 }
@@ -163,12 +178,15 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 		availablePercent = (metrics.Available / metrics.TotalBalance) * 100
 	}
 
-	sb.WriteString(fmt.Sprintf("净值$%.2f | 可用$%.2f (%.1f%%) | 收益%+.2f%% | 回撤%.2f%%(峰值) | 未实现盈亏$%+.2f\n\n",
+	sb.WriteString(fmt.Sprintf("净值$%.2f(初始$%.2f,峰值$%.2f) | 可用$%.2f(%.1f%%) | 收益%+.2f%% | 回撤%.2f%%(峰值)/%.2f%%(初始) | 未实现盈亏$%+.2f\n\n",
 		metrics.TotalBalance,
+		metrics.InitialBalance,
+		metrics.PeakBalance,
 		metrics.Available,
 		availablePercent,
 		metrics.ReturnPercent,
 		metrics.DrawdownFromPeak,
+		metrics.DrawdownFromInitial,
 		metrics.UnrealisedPnl))
 }
 
