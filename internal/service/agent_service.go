@@ -28,6 +28,7 @@ type AgentService struct {
 	*orz.Service
 	*repo.TradeRepo
 	*repo.DecisionRepo
+	*repo.LLMLogRepo
 
 	openAIClient    *openai.Client
 	exchange        exchange.Exchange
@@ -50,6 +51,7 @@ func NewAgentService(
 		Service:         orz.NewService(db),
 		TradeRepo:       repo.NewTradeRepo(db),
 		DecisionRepo:    repo.NewDecisionRepo(db),
+		LLMLogRepo:      repo.NewLLMLogRepo(db),
 		openAIClient:    openAIClient,
 		exchange:        exchange,
 		positionService: positionService,
@@ -73,8 +75,8 @@ type DecisionRound struct {
 }
 
 // ExecuteDecision 执行AI决策
-func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions string, prompt string, accountMetrics *AccountMetrics) (*DecisionResult, error) {
-	s.logger.Info("executing LLM decision")
+func (s *AgentService) ExecuteDecision(ctx context.Context, decisionID string, systemInstructions string, prompt string, accountMetrics *AccountMetrics) (*DecisionResult, error) {
+	s.logger.Info("executing LLM decision", zap.String("decision_id", decisionID))
 
 	// 构建工具函数定义
 	tools := s.buildOpenAITools(accountMetrics)
@@ -94,6 +96,9 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 
 	maxIterations := 10 // 防止无限循环
 	for iteration := 0; iteration < maxIterations; iteration++ {
+		// 记录请求开始时间
+		startTime := time.Now()
+
 		// 调用 OpenAI API
 		resp, err := s.openAIClient.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 			Model:    s.model,
@@ -101,7 +106,12 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 			Tools:    tools,
 		})
 
+		// 计算请求耗时
+		duration := time.Since(startTime).Milliseconds()
+
 		if err != nil {
+			// 记录失败的LLM调用
+			s.saveLLMLog(ctx, decisionID, iteration+1, iteration+1, systemInstructions, prompt, messages, "", nil, nil, 0, 0, "", duration, err.Error())
 			return nil, fmt.Errorf("failed to call OpenAI API: %w", err)
 		}
 
@@ -119,12 +129,25 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 		// 添加助手消息到对话历史
 		messages = append(messages, message.ToParam())
 
+		// 准备记录工具调用和响应
+		var toolCallsForLog []map[string]interface{}
+		var toolResponsesForLog []map[string]interface{}
+
 		// 检查是否有工具调用
 		if len(message.ToolCalls) == 0 {
 			// 没有工具调用，获取最终文本并结束
 			if message.Content != "" {
 				finalText = strings.TrimSpace(message.Content)
 			}
+			// 记录最终的LLM调用（无工具调用）
+			finishReason := ""
+			if choice.FinishReason != "" {
+				finishReason = choice.FinishReason
+			}
+			s.saveLLMLog(ctx, decisionID, iteration+1, iteration+1, systemInstructions, prompt, messages,
+				message.Content, nil, nil,
+				int(resp.Usage.PromptTokens), int(resp.Usage.CompletionTokens),
+				finishReason, duration, "")
 			break
 		}
 
@@ -157,6 +180,18 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 				toolSummary := s.formatToolCall(toolCall.Function.Name, args)
 				currentRound.ToolCalls = append(currentRound.ToolCalls,
 					fmt.Sprintf("✗ %s - 错误: 参数解析失败", toolSummary))
+
+				// 记录到日志
+				toolCallsForLog = append(toolCallsForLog, map[string]interface{}{
+					"id":        toolCall.ID,
+					"function":  toolCall.Function.Name,
+					"arguments": toolCall.Function.Arguments,
+					"error":     "参数解析失败",
+				})
+				toolResponsesForLog = append(toolResponsesForLog, map[string]interface{}{
+					"tool_call_id": toolCall.ID,
+					"error":        "参数解析失败",
+				})
 				continue
 			}
 
@@ -186,10 +221,31 @@ func (s *AgentService) ExecuteDecision(ctx context.Context, systemInstructions s
 
 			// 记录工具调用和响应到当前轮次
 			currentRound.ToolCalls = append(currentRound.ToolCalls, s.formatToolCallWithResult(toolSummary, result))
+
+			// 记录到日志
+			toolCallsForLog = append(toolCallsForLog, map[string]interface{}{
+				"id":        toolCall.ID,
+				"function":  toolCall.Function.Name,
+				"arguments": args,
+			})
+			toolResponsesForLog = append(toolResponsesForLog, map[string]interface{}{
+				"tool_call_id": toolCall.ID,
+				"result":       result,
+			})
 		}
 
 		// 保存本轮记录
 		rounds = append(rounds, currentRound)
+
+		// 记录本轮的LLM调用（包含工具调用）
+		finishReason := ""
+		if choice.FinishReason != "" {
+			finishReason = choice.FinishReason
+		}
+		s.saveLLMLog(ctx, decisionID, iteration+1, iteration+1, systemInstructions, prompt, messages,
+			message.Content, toolCallsForLog, toolResponsesForLog,
+			int(resp.Usage.PromptTokens), int(resp.Usage.CompletionTokens),
+			finishReason, duration, "")
 
 		// 将工具响应添加到对话历史
 		messages = append(messages, toolMessages...)
@@ -716,9 +772,9 @@ func (s *AgentService) calculatePositionSize(accountValue float64, riskPercent f
 	return riskAmount / (stopLossPercent / 100 * float64(leverage))
 }
 
-// SaveDecision 保存AI决策记录
+// SaveDecision 保存AI决策记录，返回决策ID
 func (s *AgentService) SaveDecision(ctx context.Context, iteration int, accountValue float64, positionCount int,
-	decisionContent string, promptTokens int, completionTokens int) error {
+	decisionContent string, promptTokens int, completionTokens int) (string, error) {
 
 	decision := &models.Decision{
 		ID:               ulid.Make().String(),
@@ -732,7 +788,25 @@ func (s *AgentService) SaveDecision(ctx context.Context, iteration int, accountV
 		ExecutedAt:       time.Now(),
 	}
 
-	return s.DecisionRepo.Create(ctx, decision)
+	if err := s.DecisionRepo.Create(ctx, decision); err != nil {
+		return "", err
+	}
+
+	return decision.ID, nil
+}
+
+// UpdateDecision 更新决策记录
+func (s *AgentService) UpdateDecision(ctx context.Context, decisionID string, decisionContent string, promptTokens int, completionTokens int) error {
+	decision, err := s.DecisionRepo.FindById(ctx, decisionID)
+	if err != nil {
+		return err
+	}
+
+	decision.DecisionContent = decisionContent
+	decision.PromptTokens = promptTokens
+	decision.CompletionTokens = completionTokens
+
+	return s.DecisionRepo.Save(ctx, &decision)
 }
 
 // GetLatestIteration 获取最近一次决策的迭代编号
@@ -765,6 +839,51 @@ func (s *AgentService) GetRecentTrades(ctx context.Context, limit int) ([]*model
 	result := make([]*models.Trade, len(trades))
 	for i := range trades {
 		result[i] = &trades[i]
+	}
+
+	return result, nil
+}
+
+// GetRecentLLMLogs 获取最近的LLM日志
+func (s *AgentService) GetRecentLLMLogs(ctx context.Context, limit int) ([]*models.LLMLog, error) {
+	logs, err := s.LLMLogRepo.FindRecentLogs(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*models.LLMLog, len(logs))
+	for i := range logs {
+		result[i] = &logs[i]
+	}
+
+	return result, nil
+}
+
+// GetLLMLogsByIteration 根据迭代次数获取LLM日志
+func (s *AgentService) GetLLMLogsByIteration(ctx context.Context, iteration int) ([]*models.LLMLog, error) {
+	logs, err := s.LLMLogRepo.FindByIteration(ctx, iteration)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*models.LLMLog, len(logs))
+	for i := range logs {
+		result[i] = &logs[i]
+	}
+
+	return result, nil
+}
+
+// GetLLMLogsByDecisionID 根据决策ID获取LLM日志
+func (s *AgentService) GetLLMLogsByDecisionID(ctx context.Context, decisionID string) ([]*models.LLMLog, error) {
+	logs, err := s.LLMLogRepo.FindByDecisionID(ctx, decisionID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*models.LLMLog, len(logs))
+	for i := range logs {
+		result[i] = &logs[i]
 	}
 
 	return result, nil
@@ -836,4 +955,80 @@ func containsAnyKeyword(text string, keywords []string) bool {
 		}
 	}
 	return false
+}
+
+// saveLLMLog 保存LLM通信日志
+func (s *AgentService) saveLLMLog(
+	ctx context.Context,
+	decisionID string,
+	iteration int,
+	roundNumber int,
+	systemPrompt string,
+	userPrompt string,
+	messages []openai.ChatCompletionMessageParamUnion,
+	assistantContent string,
+	toolCalls []map[string]interface{},
+	toolResponses []map[string]interface{},
+	promptTokens int,
+	completionTokens int,
+	finishReason string,
+	duration int64,
+	errorMsg string,
+) {
+	// 将消息历史序列化为JSON
+	messagesJSON, err := json.Marshal(messages)
+	if err != nil {
+		s.logger.Error("failed to marshal messages for LLM log", zap.Error(err))
+		messagesJSON = []byte("[]")
+	}
+
+	// 将工具调用序列化为JSON
+	toolCallsJSON := "[]"
+	if len(toolCalls) > 0 {
+		if data, err := json.Marshal(toolCalls); err == nil {
+			toolCallsJSON = string(data)
+		}
+	}
+
+	// 将工具响应序列化为JSON
+	toolResponsesJSON := "[]"
+	if len(toolResponses) > 0 {
+		if data, err := json.Marshal(toolResponses); err == nil {
+			toolResponsesJSON = string(data)
+		}
+	}
+
+	// 创建日志记录
+	llmLog := &models.LLMLog{
+		ID:               ulid.Make().String(),
+		DecisionID:       decisionID,
+		Iteration:        iteration,
+		RoundNumber:      roundNumber,
+		Model:            s.model,
+		SystemPrompt:     systemPrompt,
+		UserPrompt:       userPrompt,
+		Messages:         string(messagesJSON),
+		AssistantContent: assistantContent,
+		ToolCalls:        toolCallsJSON,
+		ToolResponses:    toolResponsesJSON,
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		TotalTokens:      promptTokens + completionTokens,
+		FinishReason:     finishReason,
+		Duration:         duration,
+		Error:            errorMsg,
+		ExecutedAt:       time.Now(),
+	}
+
+	// 保存到数据库
+	if err := s.LLMLogRepo.Create(ctx, llmLog); err != nil {
+		s.logger.Error("failed to save LLM log", zap.Error(err))
+	} else {
+		s.logger.Debug("LLM log saved",
+			zap.String("log_id", llmLog.ID),
+			zap.Int("iteration", iteration),
+			zap.Int("round", roundNumber),
+			zap.Int("prompt_tokens", promptTokens),
+			zap.Int("completion_tokens", completionTokens))
+	}
 }

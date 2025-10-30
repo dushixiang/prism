@@ -31,7 +31,7 @@ type Position struct {
 }
 
 // TableName 指定表名
-func (Position) TableName() string {
+func (*Position) TableName() string {
 	return "positions"
 }
 
@@ -52,22 +52,6 @@ func (p *Position) CalculatePnlPercent() float64 {
 	return priceChange * float64(p.Leverage)
 }
 
-// CalculateHoldingHours 计算持仓小时数
-func (p *Position) CalculateHoldingHours() float64 {
-	return time.Since(p.OpenedAt).Hours()
-}
-
-// CalculateHoldingCycles 计算持仓周期数（假设每10分钟一个周期）
-func (p *Position) CalculateHoldingCycles() int {
-	minutes := time.Since(p.OpenedAt).Minutes()
-	return int(minutes / 10)
-}
-
-// RemainingHours 计算距离36小时的剩余时间
-func (p *Position) RemainingHours() float64 {
-	remaining := 36 - p.CalculateHoldingHours()
-	if remaining < 0 {
-		return 0
-	}
-	return remaining
+func (p *Position) CalculateHolding() time.Duration {
+	return time.Since(p.OpenedAt)
 }

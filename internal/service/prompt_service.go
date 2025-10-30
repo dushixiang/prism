@@ -181,25 +181,11 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 
 	for i, pos := range positions {
 		pnlPercent := pos.CalculatePnlPercent()
-		holdingHours := pos.CalculateHoldingHours()
-
-		// 计算持仓时长文本
-		holdingDuration := ""
-		if holdingHours < 1 {
-			holdingDuration = fmt.Sprintf("%.0f分钟", holdingHours*60)
-		} else {
-			hours := int(holdingHours)
-			minutes := int((holdingHours - float64(hours)) * 60)
-			if minutes > 0 {
-				holdingDuration = fmt.Sprintf("%d小时%d分", hours, minutes)
-			} else {
-				holdingDuration = fmt.Sprintf("%d小时", hours)
-			}
-		}
+		holding := pos.CalculateHolding()
 
 		sb.WriteString(fmt.Sprintf("### %d. %s %s\n", i+1, pos.Symbol, strings.ToUpper(pos.Side)))
-		sb.WriteString(fmt.Sprintf("入场$%.2f → 当前$%.2f | 盈亏$%+.2f (%+.2f%%) | %dx杠杆 | 持仓%s\n",
-			pos.EntryPrice, pos.CurrentPrice, pos.UnrealizedPnl, pnlPercent, pos.Leverage, holdingDuration))
+		sb.WriteString(fmt.Sprintf("入场$%.2f → 当前$%.2f | 盈亏$%+.2f (%+.2f%%) | %dx杠杆 | 持仓时间 %s\n",
+			pos.EntryPrice, pos.CurrentPrice, pos.UnrealizedPnl, pnlPercent, pos.Leverage, holding.Round(time.Minute).String()))
 
 		// 开仓理由和退出计划
 		if strings.TrimSpace(pos.EntryReason) != "" {

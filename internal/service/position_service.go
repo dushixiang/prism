@@ -216,23 +216,6 @@ func (s *PositionService) UpdatePositionPlan(ctx context.Context, symbol, side, 
 	return s.PositionRepo.Save(ctx, &position)
 }
 
-// GetPositionWarnings 获取持仓警告信息
-func (s *PositionService) GetPositionWarnings(position *models.Position) []string {
-	warnings := make([]string, 0)
-
-	remainingHours := position.RemainingHours()
-
-	if remainingHours <= 0 {
-		warnings = append(warnings, "🚨 持仓时间已超过36小时限制")
-	} else if remainingHours < 2 {
-		warnings = append(warnings, "⚠️ 警告：即将达到36小时限制，必须立即平仓")
-	} else if remainingHours < 4 {
-		warnings = append(warnings, "⚠️ 提醒：距离36小时限制不足4小时，请准备平仓")
-	}
-
-	return warnings
-}
-
 // StartSyncWorker 启动后台持仓同步worker
 func (s *PositionService) StartSyncWorker(ctx context.Context, interval time.Duration) {
 	s.stopChan = make(chan struct{})

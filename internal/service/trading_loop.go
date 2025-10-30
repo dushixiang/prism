@@ -205,7 +205,16 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 	// ========== Step 5: LLM Agent决策 ==========
 	t.logger.Info("[STEP 5/6] Executing LLM decision...")
 
-	decision, err := t.agentService.ExecuteDecision(ctx, systemInstructions, prompt, accountMetrics)
+	// 先创建决策记录以获取决策ID（先保存一个占位记录）
+	decisionID, err := t.agentService.SaveDecision(ctx, t.iteration, accountMetrics.TotalBalance,
+		len(positions), "执行中...", 0, 0)
+	if err != nil {
+		t.logger.Error("[STEP 5/6] Failed to create decision record", zap.Error(err))
+		return fmt.Errorf("step 5 failed - create decision: %w", err)
+	}
+
+	// 执行LLM决策
+	decision, err := t.agentService.ExecuteDecision(ctx, decisionID, systemInstructions, prompt, accountMetrics)
 	if err != nil {
 		t.logger.Error("[STEP 5/6] LLM decision failed", zap.Error(err))
 		return fmt.Errorf("step 5 failed - LLM decision: %w", err)
@@ -217,10 +226,9 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 		zap.Int("completion_tokens", decision.CompletionTokens),
 		zap.String("decision_preview", truncateString(decision.DecisionText, 200)))
 
-	// 保存决策记录
-	if err := t.agentService.SaveDecision(ctx, t.iteration, accountMetrics.TotalBalance,
-		len(positions), decision.DecisionText, decision.PromptTokens, decision.CompletionTokens); err != nil {
-		t.logger.Error("failed to save decision", zap.Error(err))
+	// 更新决策记录为完整内容
+	if err := t.agentService.UpdateDecision(ctx, decisionID, decision.DecisionText, decision.PromptTokens, decision.CompletionTokens); err != nil {
+		t.logger.Error("failed to update decision", zap.Error(err))
 	}
 
 	// ========== Step 6: 执行后处理 ==========
@@ -268,7 +276,7 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 				zap.Int("leverage", pos.Leverage),
 				zap.Float64("pnl_percent", pos.CalculatePnlPercent()),
 				zap.Float64("pnl_usdt", pos.UnrealizedPnl),
-				zap.Float64("holding_hours", pos.CalculateHoldingHours()))
+			)
 		}
 	}
 

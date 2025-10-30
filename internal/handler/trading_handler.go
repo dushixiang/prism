@@ -64,20 +64,19 @@ func (h *TradingHandler) GetStatus(c echo.Context) error {
 	positionsData := make([]map[string]interface{}, 0, len(positions))
 	for _, pos := range positions {
 		positionsData = append(positionsData, map[string]interface{}{
-			"id":              pos.ID,
-			"symbol":          pos.Symbol,
-			"side":            pos.Side,
-			"quantity":        pos.Quantity,
-			"entry_price":     pos.EntryPrice,
-			"current_price":   pos.CurrentPrice,
-			"unrealized_pnl":  pos.UnrealizedPnl,
-			"pnl_percent":     pos.CalculatePnlPercent(),
-			"leverage":        pos.Leverage,
-			"holding_hours":   pos.CalculateHoldingHours(),
-			"remaining_hours": pos.RemainingHours(),
-			"opened_at":       pos.OpenedAt,
-			"entry_reason":    pos.EntryReason,
-			"exit_plan":       pos.ExitPlan,
+			"id":             pos.ID,
+			"symbol":         pos.Symbol,
+			"side":           pos.Side,
+			"quantity":       pos.Quantity,
+			"entry_price":    pos.EntryPrice,
+			"current_price":  pos.CurrentPrice,
+			"unrealized_pnl": pos.UnrealizedPnl,
+			"pnl_percent":    pos.CalculatePnlPercent(),
+			"leverage":       pos.Leverage,
+			"holding":        pos.CalculateHolding(),
+			"opened_at":      pos.OpenedAt,
+			"entry_reason":   pos.EntryReason,
+			"exit_plan":      pos.ExitPlan,
 		})
 	}
 
@@ -135,8 +134,6 @@ func (h *TradingHandler) GetPositions(c echo.Context) error {
 
 	positionsData := make([]map[string]interface{}, 0, len(positions))
 	for _, pos := range positions {
-		warnings := h.positionService.GetPositionWarnings(pos)
-
 		positionsData = append(positionsData, map[string]interface{}{
 			"id":                pos.ID,
 			"symbol":            pos.Symbol,
@@ -150,13 +147,10 @@ func (h *TradingHandler) GetPositions(c echo.Context) error {
 			"leverage":          pos.Leverage,
 			"margin":            pos.Margin,
 			"peak_pnl_percent":  pos.PeakPnlPercent,
-			"holding_hours":     pos.CalculateHoldingHours(),
-			"holding_cycles":    pos.CalculateHoldingCycles(),
-			"remaining_hours":   pos.RemainingHours(),
+			"holding":           pos.CalculateHolding(),
 			"opened_at":         pos.OpenedAt,
 			"entry_reason":      pos.EntryReason,
 			"exit_plan":         pos.ExitPlan,
-			"warnings":          warnings,
 		})
 	}
 
@@ -295,6 +289,50 @@ func (h *TradingHandler) Stop(c echo.Context) error {
 	})
 }
 
+// GetLLMLogs 获取LLM通信日志
+// GET /api/trading/llm-logs?decision_id=xxx 或 ?limit=100&iteration=1
+func (h *TradingHandler) GetLLMLogs(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// 获取查询参数
+	decisionID := c.QueryParam("decision_id")
+	limitStr := c.QueryParam("limit")
+	iterationStr := c.QueryParam("iteration")
+
+	// 默认限制100条
+	limit := 100
+	if limitStr != "" {
+		fmt.Sscanf(limitStr, "%d", &limit)
+	}
+
+	var logs interface{}
+	var err error
+
+	// 优先按决策ID查询
+	if decisionID != "" {
+		logs, err = h.agentService.GetLLMLogsByDecisionID(ctx, decisionID)
+	} else if iterationStr != "" {
+		// 如果指定了迭代次数，查询该迭代的所有日志
+		var iteration int
+		fmt.Sscanf(iterationStr, "%d", &iteration)
+		logs, err = h.agentService.GetLLMLogsByIteration(ctx, iteration)
+	} else {
+		// 否则查询最近的日志
+		logs, err = h.agentService.GetRecentLLMLogs(ctx, limit)
+	}
+
+	if err != nil {
+		h.logger.Error("failed to get LLM logs", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"logs": logs,
+	})
+}
+
 // RegisterRoutes 注册路由
 func (h *TradingHandler) RegisterRoutes(g *echo.Group) {
 	trading := g.Group("/trading")
@@ -305,4 +343,5 @@ func (h *TradingHandler) RegisterRoutes(g *echo.Group) {
 	trading.GET("/decisions", h.GetDecisions)
 	trading.GET("/trades", h.GetTrades)
 	trading.GET("/equity-curve", h.GetEquityCurve)
+	trading.GET("/llm-logs", h.GetLLMLogs)
 }

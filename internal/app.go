@@ -87,7 +87,7 @@ func (r *PrismApp) Configure(app *orz.App) error {
 
 	if err := db.AutoMigrate(
 		// Trading system models
-		models.AccountHistory{}, models.Position{}, models.Trade{}, models.Decision{},
+		models.AccountHistory{}, models.Position{}, models.Trade{}, models.Decision{}, models.LLMLog{},
 	); err != nil {
 		logger.Fatal("database auto migrate failed", zap.Error(err))
 	}
