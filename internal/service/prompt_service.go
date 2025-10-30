@@ -130,16 +130,22 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 		}
 		sb.WriteString("\n")
 
-		// 日内序列（15分钟K线，最近50根约12.5小时）
+		// 日内序列（15分钟K线）- 紧凑格式
 		if data.IntradaySeries != nil && len(data.IntradaySeries.ClosePrices) > 0 {
-			sb.WriteString("**15分钟K线序列**（最近50根，约12.5小时）\n")
-			sb.WriteString(fmt.Sprintf("- 开盘价: %v\n", formatFloatArray(data.IntradaySeries.OpenPrices)))
-			sb.WriteString(fmt.Sprintf("- 收盘价: %v\n", formatFloatArray(data.IntradaySeries.ClosePrices)))
-			sb.WriteString(fmt.Sprintf("- 最高价: %v\n", formatFloatArray(data.IntradaySeries.HighPrices)))
-			sb.WriteString(fmt.Sprintf("- 最低价: %v\n", formatFloatArray(data.IntradaySeries.LowPrices)))
+			count := len(data.IntradaySeries.OpenPrices)
+			hours := float64(count) * 15.0 / 60.0
+			sb.WriteString(fmt.Sprintf("**15分钟K线序列**（最近%d根，约%.1f小时）\n", count, hours))
+
+			// OHLC合并为紧凑格式: [O|H|L|C]
+			sb.WriteString(fmt.Sprintf("- K线[O|H|L|C]: %s\n",
+				formatOHLCArray(data.IntradaySeries.OpenPrices,
+					data.IntradaySeries.HighPrices,
+					data.IntradaySeries.LowPrices,
+					data.IntradaySeries.ClosePrices)))
+
+			// 指标保留，但只显示关键的
 			sb.WriteString(fmt.Sprintf("- EMA20: %v\n", formatFloatArray(data.IntradaySeries.EMA20Series)))
 			sb.WriteString(fmt.Sprintf("- MACD: %v\n", formatFloatArray(data.IntradaySeries.MACDSeries)))
-			sb.WriteString(fmt.Sprintf("- RSI7: %v\n", formatFloatArray(data.IntradaySeries.RSI7Series)))
 			sb.WriteString(fmt.Sprintf("- RSI14: %v\n", formatFloatArray(data.IntradaySeries.RSI14Series)))
 			sb.WriteString("\n")
 		}
@@ -299,6 +305,47 @@ func formatFloatArray(arr []float64) string {
 		strs[i] = fmt.Sprintf("%.2f", v)
 	}
 	return "[" + strings.Join(strs, ", ") + "]"
+}
+
+// formatOHLCArray 格式化OHLC数组为紧凑格式
+func formatOHLCArray(opens, highs, lows, closes []float64) string {
+	if len(opens) == 0 || len(opens) != len(highs) || len(opens) != len(lows) || len(opens) != len(closes) {
+		return "[]"
+	}
+
+	// 自动检测精度：根据平均价格大小决定小数位数
+	avgPrice := 0.0
+	for i := range closes {
+		avgPrice += closes[i]
+	}
+	avgPrice /= float64(len(closes))
+
+	// 根据价格范围选择精度
+	var precision int
+	switch {
+	case avgPrice >= 100:
+		precision = 1 // 大于100: 保留1位 (如 BTC: 50000.1)
+	case avgPrice >= 1:
+		precision = 2 // 1-100: 保留2位 (如 ETH: 2500.12)
+	case avgPrice >= 0.01:
+		precision = 4 // 0.01-1: 保留4位 (如某些山寨币: 0.1234)
+	default:
+		precision = 6 // 小于0.01: 保留6位 (如 SHIB: 0.000012)
+	}
+
+	formatStr := fmt.Sprintf("[%%.%df|%%.%df|%%.%df|%%.%df]", precision, precision, precision, precision)
+
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i := range opens {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		// 格式: [O|H|L|C] 例如 [100.5|101.2|99.8|100.9]
+		sb.WriteString(fmt.Sprintf(formatStr, opens[i], highs[i], lows[i], closes[i]))
+	}
+	sb.WriteString("]")
+	return sb.String()
 }
 
 // GetSystemInstructions 获取系统指令

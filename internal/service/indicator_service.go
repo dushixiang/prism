@@ -128,7 +128,7 @@ func (s *IndicatorService) CalculateTimeSeries(klines []*exchange.Kline) *TimeSe
 	rsi14Series := ta.RSI(closes, 14)
 
 	// 返回最近48个数据点（约12小时的15分钟K线数据）
-	size := 48
+	size := 24
 	if len(closes) < size {
 		size = len(closes)
 	}
