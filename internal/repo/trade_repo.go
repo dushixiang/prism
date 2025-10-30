@@ -28,3 +28,16 @@ func (r TradeRepo) FindRecentTrades(ctx context.Context, limit int) ([]models.Tr
 		Find(&trades).Error
 	return trades, err
 }
+
+// FindFirstTrade 获取第一笔交易记录
+func (r TradeRepo) FindFirstTrade(ctx context.Context) (*models.Trade, error) {
+	var trade models.Trade
+	db := r.GetDB(ctx)
+	err := db.Table(r.GetTableName()).
+		Order("executed_at ASC").
+		First(&trade).Error
+	if err != nil {
+		return nil, err
+	}
+	return &trade, nil
+}

@@ -10,24 +10,24 @@ import (
 
 	"github.com/dushixiang/prism/internal/config"
 	"github.com/dushixiang/prism/internal/models"
+	"github.com/dushixiang/prism/internal/repo"
 	"github.com/valyala/fasttemplate"
-	"gorm.io/gorm"
 )
 
 // PromptService AI提示词生成服务
 type PromptService struct {
-	db     *gorm.DB
-	config *config.Config
+	config    *config.Config
+	tradeRepo *repo.TradeRepo
 }
 
 //go:embed templates/system_instructions.txt
 var systemInstructionsTemplate string
 
 // NewPromptService 创建提示词服务
-func NewPromptService(db *gorm.DB, conf *config.Config) *PromptService {
+func NewPromptService(conf *config.Config, tradeRepo *repo.TradeRepo) *PromptService {
 	return &PromptService{
-		db:     db,
-		config: conf,
+		config:    conf,
+		tradeRepo: tradeRepo,
 	}
 }
 
@@ -71,7 +71,16 @@ func (s *PromptService) writeConversationContext(sb *strings.Builder, data *Prom
 	currentTime := now.Format("2006-01-02 15:04:05")
 
 	var minutesElapsed float64
-	if !data.StartTime.IsZero() {
+	// 使用第一笔交易时间作为起始时间，如果没有交易则使用启动时间
+	ctx := context.Background()
+	firstTrade, err := s.tradeRepo.FindFirstTrade(ctx)
+	if err == nil && firstTrade != nil {
+		minutesElapsed = time.Since(firstTrade.ExecutedAt).Minutes()
+		if minutesElapsed < 0 {
+			minutesElapsed = 0
+		}
+	} else if !data.StartTime.IsZero() {
+		// 如果没有交易记录，仍然显示启动后的时间
 		minutesElapsed = time.Since(data.StartTime).Minutes()
 		if minutesElapsed < 0 {
 			minutesElapsed = 0
@@ -108,18 +117,18 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 
 		// 多时间框架指标（紧凑格式）
 		sb.WriteString("**多周期指标**\n")
-		timeframes := []string{"5m", "15m", "30m", "1h"}
+		timeframes := []string{"15m", "30m", "1h"}
 		for _, tf := range timeframes {
 			if ind, ok := data.Timeframes[tf]; ok {
-				sb.WriteString(fmt.Sprintf("- %s: 价格$%.2f | EMA20/50: $%.2f/$%.2f | MACD=%.2f | RSI=%.1f/%.1f | 量%.0f\n",
+				sb.WriteString(fmt.Sprintf("- %s: 价格$%.2f | EMA20/50: $%.2f/$%.2f | MACD=%.2f | RSI=%.1f/%.1f | Volume=%.0f\n",
 					tf, ind.Price, ind.EMA20, ind.EMA50, ind.MACD, ind.RSI7, ind.RSI14, ind.Volume))
 			}
 		}
 		sb.WriteString("\n")
 
-		// 日内序列（仅显示最新值和趋势）
+		// 日内序列（仅显示最新值和趋势）- 改为15分钟以减少噪音
 		if data.IntradaySeries != nil && len(data.IntradaySeries.MidPrices) > 0 {
-			sb.WriteString("**5分钟序列**（最近10点）\n")
+			sb.WriteString("**15分钟序列**（最近10点）\n")
 			sb.WriteString(fmt.Sprintf("- 价格: %v\n", formatFloatArray(data.IntradaySeries.MidPrices)))
 			sb.WriteString(fmt.Sprintf("- EMA20: %v\n", formatFloatArray(data.IntradaySeries.EMA20Series)))
 			sb.WriteString(fmt.Sprintf("- MACD: %v\n", formatFloatArray(data.IntradaySeries.MACDSeries)))
@@ -185,15 +194,15 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 		holdingStr, _ := strings.CutSuffix(holding.Round(time.Minute).String(), "0s")
 
 		sb.WriteString(fmt.Sprintf("### %d. %s %s\n", i+1, pos.Symbol, strings.ToUpper(pos.Side)))
-		sb.WriteString(fmt.Sprintf("入场$%.2f → 当前$%.2f | 盈亏$%+.2f (%+.2f%%) | %dx杠杆 | 持仓时间 %s\n",
+		sb.WriteString(fmt.Sprintf("入场$%.2f → 当前$%.2f | 盈亏$%+.2f (%+.2f%%) | %dx杠杆 | 持仓时间 %s\n\n",
 			pos.EntryPrice, pos.CurrentPrice, pos.UnrealizedPnl, pnlPercent, pos.Leverage, holdingStr))
 
 		// 开仓理由和退出计划
 		if strings.TrimSpace(pos.EntryReason) != "" {
-			sb.WriteString(fmt.Sprintf("**开仓理由**: %s\n", pos.EntryReason))
+			sb.WriteString(fmt.Sprintf("**开仓理由**: %s\n\n", pos.EntryReason))
 		}
 		if strings.TrimSpace(pos.ExitPlan) != "" {
-			sb.WriteString(fmt.Sprintf("**退出计划**: %s\n", pos.ExitPlan))
+			sb.WriteString(fmt.Sprintf("**退出计划**: %s\n\n", pos.ExitPlan))
 		}
 
 		sb.WriteString("\n")
@@ -209,13 +218,40 @@ func (s *PromptService) writeTradeHistory(sb *strings.Builder, trades []*models.
 		return
 	}
 
+	// 统计信息
+	var totalPnl, totalFees float64
+	var wins, losses int
+	for _, trade := range trades {
+		if trade.Type == "close" {
+			totalPnl += trade.Pnl
+			if trade.Pnl > 0 {
+				wins++
+			} else if trade.Pnl < 0 {
+				losses++
+			}
+		}
+		totalFees += trade.Fee
+	}
+
+	closedTrades := wins + losses
+	if closedTrades > 0 {
+		winRate := float64(wins) / float64(closedTrades) * 100
+		sb.WriteString(fmt.Sprintf("**统计**: 胜率 %.0f%% (%d胜/%d负) | 净盈亏 $%.2f | 累计手续费 $%.2f\n\n",
+			winRate, wins, losses, totalPnl, totalFees))
+	}
+
+	// 交易列表
 	for i, trade := range trades {
 		sb.WriteString(fmt.Sprintf("%d. [%s] %s %s, 价格=$%.2f, 数量=%.4f, 杠杆=%dx, 手续费=$%.2f",
 			i+1, trade.ExecutedAt.Format("01-02 15:04"), trade.Type, trade.Symbol,
 			trade.Price, trade.Quantity, trade.Leverage, trade.Fee))
 
 		if trade.Type == "close" && trade.Pnl != 0 {
-			sb.WriteString(fmt.Sprintf(", 盈亏=$%.2f", trade.Pnl))
+			pnlSign := ""
+			if trade.Pnl > 0 {
+				pnlSign = "+"
+			}
+			sb.WriteString(fmt.Sprintf(", 盈亏=%s$%.2f", pnlSign, trade.Pnl))
 		}
 		sb.WriteString("\n")
 	}

@@ -513,6 +513,11 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 		executedQty = actualQuantity
 	}
 
+	// 计算手续费 (0.10% = 0.001)
+	feeRate := 0.001
+	notionalTraded := avgPrice * executedQty
+	fee := notionalTraded * feeRate
+
 	// 记录交易
 	trade := &models.Trade{
 		ID:         ulid.Make().String(),
@@ -522,6 +527,7 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 		Price:      avgPrice,
 		Quantity:   executedQty,
 		Leverage:   leverage,
+		Fee:        fee,
 		OrderID:    fmt.Sprintf("%d", order.OrderID),
 		ExecutedAt: time.Now(),
 	}
@@ -644,6 +650,11 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 
 	pnl := targetPosition.UnrealizedPnl
 
+	// 计算手续费 (0.10% = 0.001)
+	feeRate := 0.001
+	notionalTraded := avgPrice * executedQty
+	fee := notionalTraded * feeRate
+
 	trade := &models.Trade{
 		ID:         ulid.Make().String(),
 		Symbol:     symbol,
@@ -652,6 +663,7 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 		Price:      avgPrice,
 		Quantity:   executedQty,
 		Leverage:   targetPosition.Leverage,
+		Fee:        fee,
 		Pnl:        pnl,
 		OrderID:    fmt.Sprintf("%d", order.OrderID),
 		PositionID: targetPosition.ID,

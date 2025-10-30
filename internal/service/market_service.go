@@ -38,7 +38,7 @@ type MarketData struct {
 	CurrentPrice   float64                         `json:"current_price"`
 	FundingRate    float64                         `json:"funding_rate"`
 	Timeframes     map[string]*TimeframeIndicators `json:"timeframes"`
-	IntradaySeries *TimeSeriesData                 `json:"intraday_series"`  // 日内5分钟序列
+	IntradaySeries *TimeSeriesData                 `json:"intraday_series"`  // 日内15分钟序列
 	LongerTermData *LongerTermContext              `json:"longer_term_data"` // 1小时更长期上下文
 }
 
@@ -55,14 +55,13 @@ type LongerTermContext struct {
 func (s *MarketService) CollectMarketData(ctx context.Context, symbol string) (*MarketData, error) {
 	s.logger.Info("collecting market data", zap.String("symbol", symbol))
 
-	// 定义需要获取的时间框架
+	// 定义需要获取的时间框架 (移除5m减少噪音)
 	timeframes := []struct {
 		name     string
 		interval string
 		limit    int
 	}{
-		{"5m", "5m", 120},
-		{"15m", "15m", 96},
+		{"15m", "15m", 120},
 		{"30m", "30m", 90},
 		{"1h", "1h", 120},
 	}
@@ -75,7 +74,7 @@ func (s *MarketService) CollectMarketData(ctx context.Context, symbol string) (*
 	// 获取各时间框架的K线数据并计算指标
 	var shortestFrame string
 	var klines1h []*exchange.Kline
-	var klines5m []*exchange.Kline
+	var klines15m []*exchange.Kline
 
 	for _, tf := range timeframes {
 		klines, err := s.exchange.GetKlines(ctx, symbol, tf.interval, tf.limit)
@@ -94,8 +93,8 @@ func (s *MarketService) CollectMarketData(ctx context.Context, symbol string) (*
 		// 保存特定时间框架的数据用于后续处理
 		if tf.name == "1h" {
 			klines1h = klines
-		} else if tf.name == "5m" {
-			klines5m = klines
+		} else if tf.name == "15m" {
+			klines15m = klines
 		}
 
 		// 计算技术指标
@@ -130,9 +129,9 @@ func (s *MarketService) CollectMarketData(ctx context.Context, symbol string) (*
 		marketData.FundingRate = fundingRate
 	}
 
-	// 计算日内时序数据（使用5分钟K线）
-	if len(klines5m) > 0 {
-		marketData.IntradaySeries = s.indicatorService.CalculateTimeSeries(klines5m)
+	// 计算日内时序数据（使用15分钟K线以减少噪音）
+	if len(klines15m) > 0 {
+		marketData.IntradaySeries = s.indicatorService.CalculateTimeSeries(klines15m)
 	}
 
 	// 计算更长期上下文（使用1小时K线）

@@ -9,6 +9,7 @@ package internal
 import (
 	"github.com/dushixiang/prism/internal/config"
 	"github.com/dushixiang/prism/internal/handler"
+	"github.com/dushixiang/prism/internal/repo"
 	"github.com/dushixiang/prism/internal/service"
 	"github.com/dushixiang/prism/internal/telegram"
 	"github.com/dushixiang/prism/pkg/exchange"
@@ -32,7 +33,8 @@ func InitializeApp(logger *zap.Logger, db *gorm.DB, conf *config.Config) (*AppCo
 	marketService := service.NewMarketService(db, exchange, indicatorService, logger)
 	tradingAccountService := service.NewTradingAccountService(db, exchange, logger)
 	positionService := service.NewPositionService(db, exchange, logger)
-	promptService := service.NewPromptService(db, conf)
+	tradeRepo := repo.NewTradeRepo(db)
+	promptService := service.NewPromptService(conf, tradeRepo)
 	client := provideOpenAIClient(conf, logger)
 	agentService := service.NewAgentService(db, client, exchange, positionService, logger, conf)
 	tradingLoop := service.NewTradingLoop(conf, marketService, tradingAccountService, positionService, promptService, agentService, logger)
@@ -65,7 +67,7 @@ var (
 	tradingSet = wire.NewSet(
 		provideBinanceClient,
 		provideExchange,
-		provideOpenAIClient, service.NewIndicatorService, service.NewMarketService, service.NewTradingAccountService, service.NewPositionService, service.NewPromptService, service.NewAgentService, service.NewTradingLoop,
+		provideOpenAIClient, repo.NewTradeRepo, service.NewIndicatorService, service.NewMarketService, service.NewTradingAccountService, service.NewPositionService, service.NewPromptService, service.NewAgentService, service.NewTradingLoop,
 	)
 )
 

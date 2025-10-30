@@ -15,6 +15,7 @@ import (
 
 	"github.com/dushixiang/prism/internal/config"
 	"github.com/dushixiang/prism/internal/handler"
+	"github.com/dushixiang/prism/internal/repo"
 	"github.com/dushixiang/prism/internal/service"
 	"github.com/dushixiang/prism/internal/telegram"
 
@@ -38,6 +39,7 @@ var (
 		provideBinanceClient,
 		provideExchange,
 		provideOpenAIClient,
+		repo.NewTradeRepo,
 		service.NewIndicatorService,
 		service.NewMarketService,
 		service.NewTradingAccountService,
