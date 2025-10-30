@@ -30,9 +30,12 @@ type TimeframeIndicators struct {
 	AvgVolume  float64 `json:"avg_volume"`
 }
 
-// TimeSeriesData 时序数据（最近10个数据点）
+// TimeSeriesData 时序数据（最近50个数据点，约12.5小时的15分钟K线）
 type TimeSeriesData struct {
-	MidPrices   []float64 `json:"mid_prices"`
+	OpenPrices  []float64 `json:"open_prices"`
+	ClosePrices []float64 `json:"close_prices"`
+	HighPrices  []float64 `json:"high_prices"`
+	LowPrices   []float64 `json:"low_prices"`
 	EMA20Series []float64 `json:"ema20_series"`
 	MACDSeries  []float64 `json:"macd_series"`
 	RSI7Series  []float64 `json:"rsi7_series"`
@@ -105,12 +108,14 @@ func (s *IndicatorService) CalculateTimeSeries(klines []*exchange.Kline) *TimeSe
 		return nil
 	}
 
-	// 提取收盘价
+	// 提取OHLC数据
+	opens := make([]float64, len(klines))
 	closes := make([]float64, len(klines))
 	highs := make([]float64, len(klines))
 	lows := make([]float64, len(klines))
 
 	for i, k := range klines {
+		opens[i] = k.Open
 		closes[i] = k.Close
 		highs[i] = k.High
 		lows[i] = k.Low
@@ -122,20 +127,17 @@ func (s *IndicatorService) CalculateTimeSeries(klines []*exchange.Kline) *TimeSe
 	rsi7Series := ta.RSI(closes, 7)
 	rsi14Series := ta.RSI(closes, 14)
 
-	// 计算中间价
-	midPrices := make([]float64, len(klines))
-	for i := range klines {
-		midPrices[i] = (highs[i] + lows[i]) / 2
-	}
-
-	// 只返回最近10个数据点
-	size := 10
+	// 返回最近48个数据点（约12小时的15分钟K线数据）
+	size := 48
 	if len(closes) < size {
 		size = len(closes)
 	}
 
 	return &TimeSeriesData{
-		MidPrices:   ta.LastValues(midPrices, size),
+		OpenPrices:  ta.LastValues(opens, size),
+		ClosePrices: ta.LastValues(closes, size),
+		HighPrices:  ta.LastValues(highs, size),
+		LowPrices:   ta.LastValues(lows, size),
 		EMA20Series: ta.LastValues(ema20Series, size),
 		MACDSeries:  ta.LastValues(macdSeries, size),
 		RSI7Series:  ta.LastValues(rsi7Series, size),

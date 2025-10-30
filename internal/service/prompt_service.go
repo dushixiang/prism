@@ -130,15 +130,17 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 		}
 		sb.WriteString("\n")
 
-		// 日内序列（仅显示最新值和趋势）- 改为15分钟以减少噪音
-		if data.IntradaySeries != nil && len(data.IntradaySeries.MidPrices) > 0 {
-			sb.WriteString("**15分钟序列**（最近10点）\n")
-			sb.WriteString(fmt.Sprintf("- 价格: %v\n", formatFloatArray(data.IntradaySeries.MidPrices)))
+		// 日内序列（15分钟K线，最近50根约12.5小时）
+		if data.IntradaySeries != nil && len(data.IntradaySeries.ClosePrices) > 0 {
+			sb.WriteString("**15分钟K线序列**（最近50根，约12.5小时）\n")
+			sb.WriteString(fmt.Sprintf("- 开盘价: %v\n", formatFloatArray(data.IntradaySeries.OpenPrices)))
+			sb.WriteString(fmt.Sprintf("- 收盘价: %v\n", formatFloatArray(data.IntradaySeries.ClosePrices)))
+			sb.WriteString(fmt.Sprintf("- 最高价: %v\n", formatFloatArray(data.IntradaySeries.HighPrices)))
+			sb.WriteString(fmt.Sprintf("- 最低价: %v\n", formatFloatArray(data.IntradaySeries.LowPrices)))
 			sb.WriteString(fmt.Sprintf("- EMA20: %v\n", formatFloatArray(data.IntradaySeries.EMA20Series)))
 			sb.WriteString(fmt.Sprintf("- MACD: %v\n", formatFloatArray(data.IntradaySeries.MACDSeries)))
-			sb.WriteString(fmt.Sprintf("- RSI7/14: %v / %v\n",
-				formatFloatArray(data.IntradaySeries.RSI7Series),
-				formatFloatArray(data.IntradaySeries.RSI14Series)))
+			sb.WriteString(fmt.Sprintf("- RSI7: %v\n", formatFloatArray(data.IntradaySeries.RSI7Series)))
+			sb.WriteString(fmt.Sprintf("- RSI14: %v\n", formatFloatArray(data.IntradaySeries.RSI14Series)))
 			sb.WriteString("\n")
 		}
 
