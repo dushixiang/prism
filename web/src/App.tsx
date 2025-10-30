@@ -312,11 +312,58 @@ const MainEquityCurveChart = ({data, initialBalance}: { data: EquityCurveDataPoi
 
         seriesRef.current = lineSeries;
 
-        // 转换数据格式
-        const chartData = data.map((point) => ({
-            time: (point.timestamp / 1000) as Time,
-            value: point.total_balance,
-        }));
+        // 转换数据格式，并按时间排序、去重
+        console.log('Original data points:', data.length);
+
+        const chartDataMap = new Map<number, number>();
+        data.forEach((point, index) => {
+            const timeSeconds = Math.floor(point.timestamp / 1000);
+            if (chartDataMap.has(timeSeconds)) {
+                console.warn(`Duplicate timestamp at index ${index}:`, timeSeconds, 'old value:', chartDataMap.get(timeSeconds), 'new value:', point.total_balance);
+            }
+            // 如果有重复时间戳，保留最新的值
+            chartDataMap.set(timeSeconds, point.total_balance);
+        });
+
+        // 转换为数组并按时间升序排序
+        let chartData = Array.from(chartDataMap.entries())
+            .sort(([timeA], [timeB]) => timeA - timeB)
+            .map(([time, value]) => ({
+                time: time as Time,
+                value: value,
+            }));
+
+        // 额外的安全检查：过滤掉任何可能的重复时间戳
+        const seenTimes = new Set<number>();
+        chartData = chartData.filter((point) => {
+            const time = point.time as number;
+            if (seenTimes.has(time)) {
+                console.warn('Duplicate timestamp detected and removed:', time);
+                return false;
+            }
+            seenTimes.add(time);
+            return true;
+        });
+
+        if (chartData.length === 0) {
+            console.error('No valid chart data after filtering');
+            return;
+        }
+
+        // 最终验证：确保数据严格升序
+        for (let i = 1; i < chartData.length; i++) {
+            const prevTime = chartData[i - 1].time as number;
+            const currTime = chartData[i].time as number;
+            if (currTime <= prevTime) {
+                console.error('Data not strictly ascending at index', i, 'prev:', prevTime, 'curr:', currTime);
+            }
+        }
+
+        console.log('Final chart data points:', chartData.length);
+        if (chartData.length > 0) {
+            console.log('First point:', chartData[0]);
+            console.log('Last point:', chartData[chartData.length - 1]);
+        }
 
         lineSeries.setData(chartData);
 
@@ -409,28 +456,31 @@ const MainEquityCurveChart = ({data, initialBalance}: { data: EquityCurveDataPoi
 
         chart.subscribeCrosshairMove(handleCrosshairMove);
 
-        // 添加初始余额参考线
-        if (initialBalance > 0) {
-            const minTime = Math.min(...data.map(d => d.timestamp / 1000));
-            const maxTime = Math.max(...data.map(d => d.timestamp / 1000));
+        // 添加初始余额参考线（需要至少2个不同时间点）
+        if (initialBalance > 0 && chartData.length >= 2) {
+            const minTime = chartData[0].time as number;
+            const maxTime = chartData[chartData.length - 1].time as number;
 
-            const referenceLine = chart.addSeries(LineSeries, {
-                color: '#94a3b8',
-                lineWidth: 1,
-                lineStyle: 3,
-                priceFormat: {
-                    type: 'price',
-                    precision: 2,
-                    minMove: 0.01,
-                },
-                lastValueVisible: false,
-                priceLineVisible: false,
-            });
+            // 只有当最小时间和最大时间不同时才添加参考线
+            if (minTime !== maxTime) {
+                const referenceLine = chart.addSeries(LineSeries, {
+                    color: '#94a3b8',
+                    lineWidth: 1,
+                    lineStyle: 3,
+                    priceFormat: {
+                        type: 'price',
+                        precision: 2,
+                        minMove: 0.01,
+                    },
+                    lastValueVisible: false,
+                    priceLineVisible: false,
+                });
 
-            referenceLine.setData([
-                {time: minTime as Time, value: initialBalance},
-                {time: maxTime as Time, value: initialBalance},
-            ]);
+                referenceLine.setData([
+                    {time: minTime as Time, value: initialBalance},
+                    {time: maxTime as Time, value: initialBalance},
+                ]);
+            }
         }
 
         // 自适应内容
