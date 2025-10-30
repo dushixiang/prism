@@ -27,13 +27,14 @@ import (
 // InitializeApp 初始化应用
 func InitializeApp(logger *zap.Logger, db *gorm.DB, conf *config.Config) (*AppComponents, error) {
 	binanceClient := provideBinanceClient(conf, logger)
+	exchange := provideExchange(conf, binanceClient, logger)
 	indicatorService := service.NewIndicatorService()
-	marketService := service.NewMarketService(db, binanceClient, indicatorService, logger)
-	tradingAccountService := service.NewTradingAccountService(db, binanceClient, logger)
-	positionService := service.NewPositionService(db, binanceClient, logger)
+	marketService := service.NewMarketService(db, exchange, indicatorService, logger)
+	tradingAccountService := service.NewTradingAccountService(db, exchange, logger)
+	positionService := service.NewPositionService(db, exchange, logger)
 	promptService := service.NewPromptService(db, conf)
 	client := provideOpenAIClient(conf, logger)
-	agentService := service.NewAgentService(db, client, binanceClient, positionService, logger, conf)
+	agentService := service.NewAgentService(db, client, exchange, positionService, logger, conf)
 	tradingLoop := service.NewTradingLoop(conf, marketService, tradingAccountService, positionService, promptService, agentService, logger)
 	tradingHandler := handler.NewTradingHandler(tradingLoop, tradingAccountService, positionService, agentService, logger)
 	telegram := provideTelegram(logger, conf)
@@ -63,7 +64,8 @@ var (
 
 	tradingSet = wire.NewSet(
 		provideBinanceClient,
-		provideOpenAIClient, service.NewIndicatorService, service.NewMarketService, service.NewPositionService, service.NewPromptService, service.NewAgentService, service.NewTradingLoop,
+		provideExchange,
+		provideOpenAIClient, service.NewIndicatorService, service.NewMarketService, service.NewTradingAccountService, service.NewPositionService, service.NewPromptService, service.NewAgentService, service.NewTradingLoop,
 	)
 )
 
@@ -87,7 +89,7 @@ func provideTelegram(logger *zap.Logger, conf *config.Config) *telegram.Telegram
 	return tg
 }
 
-// provideBinanceClient provides Binance client
+// provideBinanceClient provides Binance client (used by both real and paper trading)
 func provideBinanceClient(conf *config.Config, logger *zap.Logger) *exchange.BinanceClient {
 	client := exchange.NewBinanceClient(
 		conf.Binance.APIKey,
@@ -102,6 +104,24 @@ func provideBinanceClient(conf *config.Config, logger *zap.Logger) *exchange.Bin
 
 	logger.Info("Binance client initialized", zap.Bool("testnet", conf.Binance.Testnet), zap.Bool("has_credentials", conf.Binance.APIKey != "" && conf.Binance.Secret != ""))
 	return client
+}
+
+// provideExchange provides Exchange interface based on configuration
+func provideExchange(conf *config.Config, binanceClient *exchange.BinanceClient, logger *zap.Logger) exchange.Exchange {
+	if conf.Trading.Enabled {
+
+		logger.Info("Using real trading mode (Binance)")
+		return binanceClient
+	}
+
+	initialBalance := conf.Trading.PaperWallet.InitialBalance
+	if initialBalance <= 0 {
+		initialBalance = 1000.0
+		logger.Warn("Paper wallet initial balance not configured or invalid, using default", zap.Float64("default_balance", initialBalance))
+	}
+
+	logger.Info("Using paper trading mode (Paper Wallet)", zap.Float64("initial_balance", initialBalance))
+	return exchange.NewPaperWallet(binanceClient, initialBalance, logger)
 }
 
 // provideOpenAIClient provides OpenAI client

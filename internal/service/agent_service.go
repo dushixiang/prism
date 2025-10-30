@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adshao/go-binance/v2/futures"
 	"github.com/dushixiang/prism/internal/config"
 	"github.com/dushixiang/prism/internal/models"
 	"github.com/dushixiang/prism/internal/repo"
@@ -31,7 +30,7 @@ type AgentService struct {
 	*repo.DecisionRepo
 
 	openAIClient    *openai.Client
-	binanceClient   *exchange.BinanceClient
+	exchange        exchange.Exchange
 	positionService *PositionService
 	tradingConf     config.TradingConf
 	model           string
@@ -41,7 +40,7 @@ type AgentService struct {
 func NewAgentService(
 	db *gorm.DB,
 	openAIClient *openai.Client,
-	binanceClient *exchange.BinanceClient,
+	exchange exchange.Exchange,
 	positionService *PositionService,
 	logger *zap.Logger,
 	conf *config.Config,
@@ -52,7 +51,7 @@ func NewAgentService(
 		TradeRepo:       repo.NewTradeRepo(db),
 		DecisionRepo:    repo.NewDecisionRepo(db),
 		openAIClient:    openAIClient,
-		binanceClient:   binanceClient,
+		exchange:        exchange,
 		positionService: positionService,
 		tradingConf:     conf.Trading,
 		model:           conf.LLM.Model,
@@ -416,7 +415,7 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 	}
 
 	// 获取当前价格计算数量
-	price, err := s.binanceClient.GetCurrentPrice(ctx, symbol)
+	price, err := s.exchange.GetCurrentPrice(ctx, symbol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current price: %w", err)
 	}
@@ -437,9 +436,9 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 	// 执行开仓
 	var order *exchange.OrderResult
 	if side == "long" {
-		order, err = s.binanceClient.OpenLongPosition(ctx, symbol, actualQuantity)
+		order, err = s.exchange.OpenLongPosition(ctx, symbol, actualQuantity)
 	} else {
-		order, err = s.binanceClient.OpenShortPosition(ctx, symbol, actualQuantity)
+		order, err = s.exchange.OpenShortPosition(ctx, symbol, actualQuantity)
 	}
 
 	if err != nil {
@@ -666,7 +665,7 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 	targetPosition := validation.Position
 
 	// 3. 获取当前价格用于记录
-	currentPrice, err := s.binanceClient.GetCurrentPrice(ctx, symbol)
+	currentPrice, err := s.exchange.GetCurrentPrice(ctx, symbol)
 	if err != nil {
 		s.logger.Warn("failed to get current price for close position", zap.Error(err))
 		currentPrice = targetPosition.CurrentPrice
@@ -682,9 +681,9 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 
 	var order *exchange.OrderResult
 	if targetPosition.Side == "long" {
-		order, err = s.binanceClient.CloseLongPosition(ctx, symbol, targetPosition.Quantity)
+		order, err = s.exchange.CloseLongPosition(ctx, symbol, targetPosition.Quantity)
 	} else {
-		order, err = s.binanceClient.CloseShortPosition(ctx, symbol, targetPosition.Quantity)
+		order, err = s.exchange.CloseShortPosition(ctx, symbol, targetPosition.Quantity)
 	}
 
 	if err != nil {
@@ -1020,14 +1019,14 @@ func (s *AgentService) setupPositionLeverage(ctx context.Context, symbol string,
 		return fmt.Errorf("leverage %d out of allowed range %d-%d", leverage, minLeverage, maxLeverage)
 	}
 
-	if err := s.binanceClient.SetMarginType(ctx, symbol, futures.MarginTypeCrossed); err != nil {
+	if err := s.exchange.SetMarginType(ctx, symbol, exchange.MarginTypeCrossed); err != nil {
 		errMsg := err.Error()
 		if !strings.Contains(errMsg, "code=-4046") && !strings.Contains(errMsg, "No need to change margin type") {
 			return fmt.Errorf("failed to set margin type: %w", err)
 		}
 	}
 
-	if err := s.binanceClient.SetLeverage(ctx, symbol, leverage); err != nil {
+	if err := s.exchange.SetLeverage(ctx, symbol, leverage); err != nil {
 		return fmt.Errorf("failed to set leverage: %w", err)
 	}
 

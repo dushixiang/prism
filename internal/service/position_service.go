@@ -23,7 +23,7 @@ type PositionService struct {
 	*orz.Service
 	*repo.PositionRepo
 
-	binanceClient *exchange.BinanceClient
+	exchange exchange.Exchange
 
 	// 后台同步相关
 	syncMutex sync.Mutex // 防止并发同步
@@ -32,12 +32,12 @@ type PositionService struct {
 }
 
 // NewPositionService 创建持仓服务
-func NewPositionService(db *gorm.DB, binanceClient *exchange.BinanceClient, logger *zap.Logger) *PositionService {
+func NewPositionService(db *gorm.DB, exchange exchange.Exchange, logger *zap.Logger) *PositionService {
 	return &PositionService{
-		logger:        logger,
-		Service:       orz.NewService(db),
-		PositionRepo:  repo.NewPositionRepo(db),
-		binanceClient: binanceClient,
+		logger:       logger,
+		Service:      orz.NewService(db),
+		PositionRepo: repo.NewPositionRepo(db),
+		exchange:     exchange,
 	}
 }
 
@@ -47,8 +47,8 @@ func (s *PositionService) SyncPositions(ctx context.Context) error {
 	s.syncMutex.Lock()
 	defer s.syncMutex.Unlock()
 
-	// 从Binance获取实时持仓
-	positions, err := s.binanceClient.GetPositions(ctx)
+	// 从交易所获取实时持仓
+	positions, err := s.exchange.GetPositions(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get positions from binance: %w", err)
 	}

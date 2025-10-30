@@ -23,16 +23,16 @@ type TradingAccountService struct {
 	*orz.Service
 	*repo.AccountHistoryRepo
 
-	binanceClient *exchange.BinanceClient
+	exchange exchange.Exchange
 }
 
 // NewTradingAccountService 创建交易账户服务
-func NewTradingAccountService(db *gorm.DB, binanceClient *exchange.BinanceClient, logger *zap.Logger) *TradingAccountService {
+func NewTradingAccountService(db *gorm.DB, exchange exchange.Exchange, logger *zap.Logger) *TradingAccountService {
 	return &TradingAccountService{
 		logger:             logger,
 		Service:            orz.NewService(db),
 		AccountHistoryRepo: repo.NewAccountHistoryRepo(db),
-		binanceClient:      binanceClient,
+		exchange:           exchange,
 	}
 }
 
@@ -51,8 +51,8 @@ type AccountMetrics struct {
 
 // GetAccountMetrics 获取账户指标
 func (s *TradingAccountService) GetAccountMetrics(ctx context.Context) (*AccountMetrics, error) {
-	// 从Binance获取账户数据
-	accountInfo, err := s.binanceClient.GetAccountInfo(ctx)
+	// 从交易所获取账户数据
+	accountInfo, err := s.exchange.GetAccountInfo(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get account info: %w", err)
 	}

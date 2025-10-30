@@ -11,6 +11,49 @@ import (
 	"github.com/adshao/go-binance/v2/futures"
 )
 
+// 类型转换函数：将通用类型转换为币安类型
+
+func toBinanceSideType(side OrderSide) futures.SideType {
+	switch side {
+	case OrderSideBuy:
+		return futures.SideTypeBuy
+	case OrderSideSell:
+		return futures.SideTypeSell
+	default:
+		return futures.SideTypeBuy
+	}
+}
+
+func toBinanceMarginType(marginType MarginType) futures.MarginType {
+	switch marginType {
+	case MarginTypeCrossed:
+		return futures.MarginTypeCrossed
+	case MarginTypeIsolated:
+		return futures.MarginTypeIsolated
+	default:
+		return futures.MarginTypeCrossed
+	}
+}
+
+func fromBinanceOrderStatus(status futures.OrderStatusType) OrderStatus {
+	switch status {
+	case futures.OrderStatusTypeNew:
+		return OrderStatusNew
+	case futures.OrderStatusTypePartiallyFilled:
+		return OrderStatusPartiallyFilled
+	case futures.OrderStatusTypeFilled:
+		return OrderStatusFilled
+	case futures.OrderStatusTypeCanceled:
+		return OrderStatusCanceled
+	case futures.OrderStatusTypeRejected:
+		return OrderStatusRejected
+	case futures.OrderStatusTypeExpired:
+		return OrderStatusExpired
+	default:
+		return OrderStatusNew
+	}
+}
+
 // BinanceClient Binance期货API客户端
 type BinanceClient struct {
 	client         *futures.Client
@@ -32,12 +75,12 @@ type SymbolInfo struct {
 
 // NewBinanceClient 创建Binance客户端
 func NewBinanceClient(apiKey, secretKey, proxyURL string, testnet bool) *BinanceClient {
-	var client *futures.Client
 	if testnet {
 		// 测试网URL
 		futures.UseTestnet = true
 	}
 
+	var client *futures.Client
 	if proxyURL != "" {
 		client = futures.NewProxiedClient(apiKey, secretKey, proxyURL)
 	} else {
@@ -190,10 +233,11 @@ func (b *BinanceClient) SetLeverage(ctx context.Context, symbol string, leverage
 }
 
 // SetMarginType 设置保证金模式
-func (b *BinanceClient) SetMarginType(ctx context.Context, symbol string, marginType futures.MarginType) error {
+func (b *BinanceClient) SetMarginType(ctx context.Context, symbol string, marginType MarginType) error {
+	binanceMarginType := toBinanceMarginType(marginType)
 	err := b.client.NewChangeMarginTypeService().
 		Symbol(symbol).
-		MarginType(marginType).
+		MarginType(binanceMarginType).
 		Do(ctx)
 
 	if err != nil {
@@ -217,7 +261,7 @@ type OrderResult struct {
 }
 
 // CreateMarketOrder 创建市价单
-func (b *BinanceClient) CreateMarketOrder(ctx context.Context, symbol string, side futures.SideType,
+func (b *BinanceClient) CreateMarketOrder(ctx context.Context, symbol string, side OrderSide,
 	quantity float64, reduceOnly bool) (*OrderResult, error) {
 
 	// 格式化数量以符合交易对精度要求
@@ -235,9 +279,10 @@ func (b *BinanceClient) CreateMarketOrder(ctx context.Context, symbol string, si
 	// 使用正确的精度格式化数量字符串
 	quantityStr := strconv.FormatFloat(formattedQty, 'f', info.QuantityPrecision, 64)
 
+	binanceSide := toBinanceSideType(side)
 	service := b.client.NewCreateOrderService().
 		Symbol(symbol).
-		Side(side).
+		Side(binanceSide).
 		Type(futures.OrderTypeMarket).
 		Quantity(quantityStr)
 
@@ -268,22 +313,22 @@ func (b *BinanceClient) CreateMarketOrder(ctx context.Context, symbol string, si
 
 // OpenLongPosition 开多仓
 func (b *BinanceClient) OpenLongPosition(ctx context.Context, symbol string, quantity float64) (*OrderResult, error) {
-	return b.CreateMarketOrder(ctx, symbol, futures.SideTypeBuy, quantity, false)
+	return b.CreateMarketOrder(ctx, symbol, OrderSideBuy, quantity, false)
 }
 
 // OpenShortPosition 开空仓
 func (b *BinanceClient) OpenShortPosition(ctx context.Context, symbol string, quantity float64) (*OrderResult, error) {
-	return b.CreateMarketOrder(ctx, symbol, futures.SideTypeSell, quantity, false)
+	return b.CreateMarketOrder(ctx, symbol, OrderSideSell, quantity, false)
 }
 
 // CloseLongPosition 平多仓
 func (b *BinanceClient) CloseLongPosition(ctx context.Context, symbol string, quantity float64) (*OrderResult, error) {
-	return b.CreateMarketOrder(ctx, symbol, futures.SideTypeSell, quantity, true)
+	return b.CreateMarketOrder(ctx, symbol, OrderSideSell, quantity, true)
 }
 
 // CloseShortPosition 平空仓
 func (b *BinanceClient) CloseShortPosition(ctx context.Context, symbol string, quantity float64) (*OrderResult, error) {
-	return b.CreateMarketOrder(ctx, symbol, futures.SideTypeBuy, quantity, true)
+	return b.CreateMarketOrder(ctx, symbol, OrderSideBuy, quantity, true)
 }
 
 // GetCurrentPrice 获取当前价格

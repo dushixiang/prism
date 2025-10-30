@@ -28,6 +28,9 @@ app:
     proxy_url: "" # 配置代理URL，为空则不使用代理
   trading:
     # 交易策略核心参数（后端不再提供自动止损/止盈，请在模型策略中自行执行风控）。
+    enabled: false  # 是否启用真实交易。false时使用纸钱包模式（模拟交易，不实际下单）。
+    paper_wallet:
+      initial_balance: 1000.0  # 纸钱包模式的初始余额（USDT）
     symbols: [ "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT" ]  # 策略关注的交易对列表。
     interval_minutes: 10  # 策略重新评估与下单的最小时间间隔（分钟）。
     max_drawdown_percent: 15  # 账户回撤的参考上限（模型需自行遵守）。

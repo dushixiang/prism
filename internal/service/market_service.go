@@ -17,17 +17,17 @@ type MarketService struct {
 
 	*orz.Service
 
-	binanceClient    *exchange.BinanceClient
+	exchange         exchange.Exchange
 	indicatorService *IndicatorService
 }
 
 // NewMarketService 创建市场数据服务
-func NewMarketService(db *gorm.DB, binanceClient *exchange.BinanceClient,
+func NewMarketService(db *gorm.DB, exchange exchange.Exchange,
 	indicatorService *IndicatorService, logger *zap.Logger) *MarketService {
 	return &MarketService{
 		logger:           logger,
 		Service:          orz.NewService(db),
-		binanceClient:    binanceClient,
+		exchange:         exchange,
 		indicatorService: indicatorService,
 	}
 }
@@ -78,7 +78,7 @@ func (s *MarketService) CollectMarketData(ctx context.Context, symbol string) (*
 	var klines5m []*exchange.Kline
 
 	for _, tf := range timeframes {
-		klines, err := s.binanceClient.GetKlines(ctx, symbol, tf.interval, tf.limit)
+		klines, err := s.exchange.GetKlines(ctx, symbol, tf.interval, tf.limit)
 		if err != nil {
 			s.logger.Error("failed to get klines",
 				zap.String("symbol", symbol),
@@ -123,7 +123,7 @@ func (s *MarketService) CollectMarketData(ctx context.Context, symbol string) (*
 	}
 
 	// 获取资金费率
-	fundingRate, err := s.binanceClient.GetFundingRate(ctx, symbol)
+	fundingRate, err := s.exchange.GetFundingRate(ctx, symbol)
 	if err != nil {
 		s.logger.Warn("failed to get funding rate", zap.String("symbol", symbol), zap.Error(err))
 	} else {

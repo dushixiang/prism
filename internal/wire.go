@@ -36,6 +36,7 @@ var (
 
 	tradingSet = wire.NewSet(
 		provideBinanceClient,
+		provideExchange,
 		provideOpenAIClient,
 		service.NewIndicatorService,
 		service.NewMarketService,
@@ -78,7 +79,7 @@ func provideTelegram(logger *zap.Logger, conf *config.Config) *telegram.Telegram
 	return tg
 }
 
-// provideBinanceClient provides Binance client
+// provideBinanceClient provides Binance client (used by both real and paper trading)
 func provideBinanceClient(conf *config.Config, logger *zap.Logger) *exchange.BinanceClient {
 	client := exchange.NewBinanceClient(
 		conf.Binance.APIKey,
@@ -96,6 +97,27 @@ func provideBinanceClient(conf *config.Config, logger *zap.Logger) *exchange.Bin
 		zap.Bool("has_credentials", conf.Binance.APIKey != "" && conf.Binance.Secret != ""),
 	)
 	return client
+}
+
+// provideExchange provides Exchange interface based on configuration
+func provideExchange(conf *config.Config, binanceClient *exchange.BinanceClient, logger *zap.Logger) exchange.Exchange {
+	if conf.Trading.Enabled {
+		// 真实交易模式
+		logger.Info("Using real trading mode (Binance)")
+		return binanceClient
+	}
+
+	// 纸钱包模式
+	initialBalance := conf.Trading.PaperWallet.InitialBalance
+	if initialBalance <= 0 {
+		initialBalance = 1000.0 // 默认值
+		logger.Warn("Paper wallet initial balance not configured or invalid, using default",
+			zap.Float64("default_balance", initialBalance))
+	}
+
+	logger.Info("Using paper trading mode (Paper Wallet)",
+		zap.Float64("initial_balance", initialBalance))
+	return exchange.NewPaperWallet(binanceClient, initialBalance, logger)
 }
 
 // provideOpenAIClient provides OpenAI client

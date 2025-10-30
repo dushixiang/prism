@@ -21,14 +21,20 @@ type BinanceConf struct {
 }
 
 type TradingConf struct {
-	Symbols             []string `json:"symbols"`                // 交易币种，如 ["BTCUSDT", "ETHUSDT"]
-	IntervalMinutes     int      `json:"interval_minutes"`       // 交易周期（分钟），默认10
-	MaxDrawdownPercent  float64  `json:"max_drawdown_percent"`   // 最大回撤百分比，默认15
-	MaxHoldingHours     int      `json:"max_holding_hours"`      // 最大持仓时间（小时），默认36
-	MaxPositions        int      `json:"max_positions"`          // 最大持仓数，默认5
-	MaxLeverage         int      `json:"max_leverage"`           // 最大杠杆，默认15
-	MinLeverage         int      `json:"min_leverage"`           // 最小杠杆，默认5
-	RiskPercentPerTrade float64  `json:"risk_percent_per_trade"` // 单笔交易风险百分比，默认2-3%
+	Enabled             bool            `json:"enabled"`                // 是否启用真实交易，false时使用纸钱包模式
+	PaperWallet         PaperWalletConf `json:"paper_wallet"`           // 纸钱包配置
+	Symbols             []string        `json:"symbols"`                // 交易币种，如 ["BTCUSDT", "ETHUSDT"]
+	IntervalMinutes     int             `json:"interval_minutes"`       // 交易周期（分钟），默认10
+	MaxDrawdownPercent  float64         `json:"max_drawdown_percent"`   // 最大回撤百分比，默认15
+	MaxHoldingHours     int             `json:"max_holding_hours"`      // 最大持仓时间（小时），默认36
+	MaxPositions        int             `json:"max_positions"`          // 最大持仓数，默认5
+	MaxLeverage         int             `json:"max_leverage"`           // 最大杠杆，默认15
+	MinLeverage         int             `json:"min_leverage"`           // 最小杠杆，默认5
+	RiskPercentPerTrade float64         `json:"risk_percent_per_trade"` // 单笔交易风险百分比，默认2-3%
+}
+
+type PaperWalletConf struct {
+	InitialBalance float64 `json:"initial_balance"` // 初始余额（USDT），默认1000
 }
 
 type LlmConf struct {
