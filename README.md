@@ -4,6 +4,12 @@ Prism 是一个面向大模型交易的助手，通过接入 Binance、利用大
 
 ----
 
+建议使用 Binance 测试网进行测试，避免真实资金风险。
+
+https://demo.binance.com/zh-CN/futures/BTCUSDT
+
+----
+
 ❌ 经过测试，不建议尝试。
 
 纯 AI 决策很不稳定（deepseek 3.1），指令不跟随，频繁交易。
