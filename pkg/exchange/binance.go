@@ -33,15 +33,15 @@ type SymbolInfo struct {
 // NewBinanceClient 创建Binance客户端
 func NewBinanceClient(apiKey, secretKey, proxyURL string, testnet bool) *BinanceClient {
 	var client *futures.Client
+	if testnet {
+		// 测试网URL
+		futures.UseTestnet = true
+	}
+
 	if proxyURL != "" {
 		client = futures.NewProxiedClient(apiKey, secretKey, proxyURL)
 	} else {
 		client = futures.NewClient(apiKey, secretKey)
-	}
-
-	if testnet {
-		// 测试网URL
-		futures.UseTestnet = true
 	}
 
 	return &BinanceClient{
