@@ -504,27 +504,26 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 	}, nil
 }
 
-// ClosePositionValidation 平仓验证结果
-type ClosePositionValidation struct {
-	Position       *models.Position
-	ExitPlan       string
-	ExitConditions []ExitCondition
-	TriggeredType  ExitConditionType
-	HoldingHours   float64
-	Reason         string
-}
+// toolClosePosition 平仓
+func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	symbol, _ := args["symbol"].(string)
+	symbol = strings.TrimSpace(symbol)
+	reason, _ := args["reason"].(string)
+	reason = strings.TrimSpace(reason)
 
-// validateClosePosition 统一的平仓验证入口
-func (s *AgentService) validateClosePosition(ctx context.Context, symbol, reason string) (*ClosePositionValidation, error) {
-	// 1. 基础参数验证
+	s.logger.Info("attempting to close position",
+		zap.String("symbol", symbol),
+		zap.String("reason", reason))
+
 	if symbol == "" {
 		return nil, fmt.Errorf("symbol is required")
 	}
-	if reason == "" {
-		return nil, fmt.Errorf("平仓理由 reason 不能为空，请说明触发的具体条件")
+
+	// 基础理由验证
+	if err := s.validateCloseReason(reason); err != nil {
+		return nil, err
 	}
 
-	// 2. 查找持仓
 	positions, err := s.positionService.GetAllPositions(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get positions: %w", err)
@@ -542,142 +541,26 @@ func (s *AgentService) validateClosePosition(ctx context.Context, symbol, reason
 		return nil, fmt.Errorf("no position found for symbol %s", symbol)
 	}
 
-	// 3. 构建验证上下文
-	validation := &ClosePositionValidation{
-		Position:      targetPosition,
-		ExitPlan:      strings.TrimSpace(targetPosition.ExitPlan),
-		HoldingHours:  targetPosition.CalculateHoldingHours(),
-		Reason:        reason,
-		TriggeredType: s.identifyTriggeredConditionType(reason),
-	}
-
-	// 4. 提取退出计划中的条件
-	if validation.ExitPlan != "" {
-		validation.ExitConditions = s.extractExitConditions(validation.ExitPlan)
-	}
-
-	// 5. 验证平仓理由与退出计划的匹配性
-	if err := s.validateExitPlanMatch(validation); err != nil {
-		return nil, err
-	}
-
-	// 6. 验证持仓时间限制
-	if err := s.validateHoldingTime(validation); err != nil {
-		return nil, err
-	}
-
-	return validation, nil
-}
-
-// validateExitPlanMatch 验证平仓理由是否匹配退出计划
-func (s *AgentService) validateExitPlanMatch(v *ClosePositionValidation) error {
-	if v.ExitPlan == "" {
-		// 没有退出计划，跳过此检查
-		return nil
-	}
-
-	if s.reasonMatchesExitPlan(v.Reason, v.ExitPlan) {
-		// 匹配成功
-		return nil
-	}
-
-	// 匹配失败，构建详细错误信息
-	var conditionTypes []string
-	for _, cond := range v.ExitConditions {
-		conditionTypes = append(conditionTypes, string(cond.Type))
-	}
-
-	errorMsg := fmt.Sprintf("【平仓被拒绝】平仓理由与退出计划不匹配\n\n")
-	errorMsg += fmt.Sprintf("退出计划：\n%s\n\n", v.ExitPlan)
-
-	if len(v.ExitConditions) > 0 {
-		errorMsg += fmt.Sprintf("计划中的退出条件：%s\n", strings.Join(conditionTypes, "、"))
-		errorMsg += fmt.Sprintf("您的平仓理由：%s\n", v.Reason)
-		if v.TriggeredType != "" {
-			errorMsg += fmt.Sprintf("识别的条件类型：%s\n\n", v.TriggeredType)
-		} else {
-			errorMsg += "识别的条件类型：未识别\n\n"
-		}
-		errorMsg += "请在 reason 中明确说明触发了计划中的哪个具体条件。\n"
-		errorMsg += "示例：\"触发止损，价格跌破 $95,000\" 或 \"达到目标价 $105,000\""
-	} else {
-		errorMsg += "请确保 reason 与退出计划的描述一致"
-	}
-
-	return fmt.Errorf(errorMsg)
-}
-
-// validateHoldingTime 验证持仓时间限制
-func (s *AgentService) validateHoldingTime(v *ClosePositionValidation) error {
-	if v.HoldingHours >= 1.0 {
-		// 持仓时间足够，无需检查
-		return nil
-	}
-
-	// 检查是否为紧急条件
-	if s.isUrgentExitCondition(v.TriggeredType) {
-		// 紧急条件，允许平仓
-		return nil
-	}
-
-	// 不满足条件，构建错误信息
-	allowedTypes := []string{string(ExitTypeStopLoss), string(ExitTypeTrailing), string(ExitTypeStructure)}
-
-	errorMsg := fmt.Sprintf("【平仓被拒绝】持仓时间不足\n\n")
-	errorMsg += fmt.Sprintf("当前持仓时长：%.1f 小时\n", v.HoldingHours)
-	errorMsg += "最小持仓要求：1.0 小时\n\n"
-	errorMsg += fmt.Sprintf("允许提前平仓的紧急条件：%s\n", strings.Join(allowedTypes, "、"))
-
-	if v.TriggeredType != "" {
-		errorMsg += fmt.Sprintf("您触发的条件类型：%s（非紧急条件）\n\n", v.TriggeredType)
-	} else {
-		errorMsg += "您触发的条件类型：未识别\n\n"
-	}
-
-	errorMsg += "请在 reason 中明确说明触发了紧急条件，或等待持仓满1小时后再平仓。\n"
-	errorMsg += "示例：\"触发止损\" 或 \"市场结构破坏，跌破支撑位\""
-
-	return fmt.Errorf(errorMsg)
-}
-
-// toolClosePosition 平仓
-func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
-	// 1. 提取参数
-	symbol, _ := args["symbol"].(string)
-	symbol = strings.TrimSpace(symbol)
-	reason, _ := args["reason"].(string)
-	reason = strings.TrimSpace(reason)
-
-	s.logger.Info("attempting to close position",
-		zap.String("symbol", symbol),
-		zap.String("reason", reason))
-
-	// 2. 统一验证（包括所有业务规则检查）
-	validation, err := s.validateClosePosition(ctx, symbol, reason)
-	if err != nil {
-		s.logger.Warn("close position validation failed",
+	// 验证平仓理由是否符合退出计划
+	if err := s.validateExitPlanCompliance(targetPosition, reason); err != nil {
+		// 记录警告但不阻止平仓（软约束）
+		s.logger.Warn("exit plan compliance check failed",
 			zap.String("symbol", symbol),
+			zap.String("exit_plan", targetPosition.ExitPlan),
 			zap.String("reason", reason),
 			zap.Error(err))
-		return nil, err
 	}
 
-	targetPosition := validation.Position
-
-	// 3. 获取当前价格用于记录
 	currentPrice, err := s.exchange.GetCurrentPrice(ctx, symbol)
 	if err != nil {
 		s.logger.Warn("failed to get current price for close position", zap.Error(err))
 		currentPrice = targetPosition.CurrentPrice
 	}
 
-	// 4. 执行平仓操作
 	s.logger.Info("executing close position",
 		zap.String("symbol", symbol),
 		zap.String("side", targetPosition.Side),
-		zap.Float64("quantity", targetPosition.Quantity),
-		zap.String("triggered_type", string(validation.TriggeredType)),
-		zap.Float64("holding_hours", validation.HoldingHours))
+		zap.Float64("quantity", targetPosition.Quantity))
 
 	var order *exchange.OrderResult
 	if targetPosition.Side == "long" {
@@ -693,7 +576,6 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 		return nil, fmt.Errorf("failed to close position: %w", err)
 	}
 
-	// 5. 处理订单结果
 	avgPrice := order.AvgPrice
 	if avgPrice == 0 {
 		avgPrice = currentPrice
@@ -706,7 +588,6 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 
 	pnl := targetPosition.UnrealizedPnl
 
-	// 6. 记录交易到数据库
 	trade := &models.Trade{
 		ID:         ulid.Make().String(),
 		Symbol:     symbol,
@@ -725,270 +606,32 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 		s.logger.Error("failed to save trade", zap.Error(err))
 	}
 
-	// 7. 删除持仓记录
 	if err := s.positionService.DeletePosition(ctx, targetPosition.ID); err != nil {
 		s.logger.Error("failed to delete position", zap.Error(err))
 	}
 
-	// 8. 同步持仓状态
 	if err := s.positionService.SyncPositions(ctx); err != nil {
 		s.logger.Warn("failed to sync positions after closing position", zap.Error(err))
 	}
 
-	// 9. 记录成功日志
+	message := fmt.Sprintf("成功平仓 %s，盈亏 $%.2f", symbol, pnl)
+	if reason != "" {
+		message += fmt.Sprintf("（理由：%s）", reason)
+	}
+
 	s.logger.Info("close position successful",
 		zap.String("symbol", symbol),
 		zap.Float64("pnl", pnl),
-		zap.String("triggered_type", string(validation.TriggeredType)),
 		zap.String("reason", reason))
 
-	// 10. 构建返回消息
-	successMessage := fmt.Sprintf("成功平仓 %s，盈亏 $%.2f", symbol, pnl)
-	if validation.TriggeredType != "" {
-		successMessage += fmt.Sprintf("（触发条件：%s）", validation.TriggeredType)
-	}
-
 	return map[string]interface{}{
-		"success":        true,
-		"order_id":       order.OrderID,
-		"symbol":         symbol,
-		"pnl":            pnl,
-		"reason":         reason,
-		"triggered_type": string(validation.TriggeredType),
-		"holding_hours":  validation.HoldingHours,
-		"message":        successMessage,
+		"success":  true,
+		"order_id": order.OrderID,
+		"symbol":   symbol,
+		"pnl":      pnl,
+		"reason":   reason,
+		"message":  message,
 	}, nil
-}
-
-// identifyTriggeredConditionType 识别平仓理由触发的条件类型
-func (s *AgentService) identifyTriggeredConditionType(reason string) ExitConditionType {
-	if reason == "" {
-		return ""
-	}
-
-	reasonLower := strings.ToLower(reason)
-
-	// 按优先级检查各类条件（越紧急的越优先）
-	conditionPatterns := []struct {
-		condType ExitConditionType
-		keywords []string
-	}{
-		{ExitTypeStopLoss, []string{"止损", "停损", "stop loss", "sl", "止损价", "止损位"}},
-		{ExitTypeTrailing, []string{"追踪止损", "移动止损", "trailing stop", "trailing"}},
-		{ExitTypeStructure, []string{"结构", "破坏", "失效", "突破", "跌破", "守不住", "站不稳", "break", "breakdown", "支撑", "失守"}},
-		{ExitTypeTakeProfit, []string{"止盈", "获利", "目标", "盈利", "take profit", "tp", "目标价", "阻力", "压力位"}},
-		{ExitTypeReversal, []string{"反转", "转向", "reversal", "反向", "转势", "趋势改变"}},
-		{ExitTypeIndicator, []string{"指标", "背离", "divergence", "rsi", "macd", "ema", "sma", "均线", "死叉", "金叉"}},
-		{ExitTypeTimeout, []string{"超时", "时间", "持有时间", "timeout"}},
-	}
-
-	for _, pattern := range conditionPatterns {
-		for _, keyword := range pattern.keywords {
-			if strings.Contains(reasonLower, strings.ToLower(keyword)) {
-				return pattern.condType
-			}
-		}
-	}
-
-	// 未识别出具体类型
-	return ""
-}
-
-// isUrgentExitCondition 判断条件类型是否属于紧急条件（允许1小时内平仓）
-func (s *AgentService) isUrgentExitCondition(condType ExitConditionType) bool {
-	switch condType {
-	case ExitTypeStopLoss, ExitTypeTrailing, ExitTypeStructure:
-		// 紧急条件：止损、追踪止损、结构破坏
-		return true
-	case ExitTypeTakeProfit, ExitTypeIndicator, ExitTypeReversal, ExitTypeTimeout:
-		// 非紧急条件：止盈、指标、反转、超时
-		return false
-	default:
-		// 未识别的类型，不允许
-		return false
-	}
-}
-
-// isCriticalExitReason 已废弃，保留用于兼容性
-// 请使用 identifyTriggeredConditionType 和 isUrgentExitCondition 替代
-func (s *AgentService) isCriticalExitReason(reasonLower string) bool {
-	condType := s.identifyTriggeredConditionType(reasonLower)
-	return s.isUrgentExitCondition(condType)
-}
-
-// ExitConditionType 退出条件类型
-type ExitConditionType string
-
-const (
-	ExitTypeStopLoss   ExitConditionType = "止损"   // 止损条件
-	ExitTypeTakeProfit ExitConditionType = "止盈"   // 止盈条件
-	ExitTypeStructure  ExitConditionType = "结构"   // 市场结构破坏
-	ExitTypeTimeout    ExitConditionType = "超时"   // 持仓超时
-	ExitTypeIndicator  ExitConditionType = "指标"   // 技术指标信号
-	ExitTypeTrailing   ExitConditionType = "追踪止损" // 追踪止损
-	ExitTypeReversal   ExitConditionType = "反转"   // 趋势反转
-)
-
-// ExitCondition 退出条件
-type ExitCondition struct {
-	Type        ExitConditionType
-	Keywords    []string // 关键词列表
-	Description string   // 条件描述
-}
-
-// extractExitConditions 从退出计划中提取所有退出条件
-func (s *AgentService) extractExitConditions(exitPlan string) []ExitCondition {
-	if exitPlan == "" {
-		return nil
-	}
-
-	exitPlanLower := strings.ToLower(exitPlan)
-	var conditions []ExitCondition
-
-	// 定义各类退出条件的关键词模式
-	conditionPatterns := []struct {
-		condType ExitConditionType
-		keywords []string
-	}{
-		{
-			ExitTypeStopLoss,
-			[]string{"止损", "停损", "亏损", "损失", "stop loss", "sl", "止损价", "止损位"},
-		},
-		{
-			ExitTypeTakeProfit,
-			[]string{"止盈", "获利", "目标", "盈利", "take profit", "tp", "目标价", "阻力", "压力位"},
-		},
-		{
-			ExitTypeTrailing,
-			[]string{"追踪止损", "移动止损", "trailing stop", "trailing", "追踪"},
-		},
-		{
-			ExitTypeStructure,
-			[]string{"结构", "破坏", "失效", "突破", "跌破", "守不住", "站不稳", "break", "breakdown", "支撑", "失守"},
-		},
-		{
-			ExitTypeReversal,
-			[]string{"反转", "转向", "reversal", "反向", "转势", "趋势改变"},
-		},
-		{
-			ExitTypeIndicator,
-			[]string{"指标", "背离", "divergence", "rsi", "macd", "ema", "sma", "均线", "死叉", "金叉", "指标信号"},
-		},
-		{
-			ExitTypeTimeout,
-			[]string{"超时", "时间", "持有时间", "timeout", "time", "小时", "天", "周期"},
-		},
-	}
-
-	// 提取每种类型的条件
-	for _, pattern := range conditionPatterns {
-		var matchedKeywords []string
-		var segments []string
-
-		for _, keyword := range pattern.keywords {
-			if strings.Contains(exitPlanLower, strings.ToLower(keyword)) {
-				matchedKeywords = append(matchedKeywords, keyword)
-				// 提取包含该关键词的句子片段
-				segments = append(segments, s.extractSentenceContaining(exitPlan, keyword)...)
-			}
-		}
-
-		if len(matchedKeywords) > 0 {
-			description := strings.Join(removeDuplicates(segments), "; ")
-			if description == "" {
-				description = string(pattern.condType) + "条件"
-			}
-			conditions = append(conditions, ExitCondition{
-				Type:        pattern.condType,
-				Keywords:    matchedKeywords,
-				Description: description,
-			})
-		}
-	}
-
-	return conditions
-}
-
-// extractSentenceContaining 提取包含关键词的句子片段
-func (s *AgentService) extractSentenceContaining(text string, keyword string) []string {
-	lowerText := strings.ToLower(text)
-	lowerKeyword := strings.ToLower(keyword)
-
-	if !strings.Contains(lowerText, lowerKeyword) {
-		return nil
-	}
-
-	// 按常见分隔符分割
-	separators := []string{"\n", "。", "；", ";", "!", "！"}
-	sentences := []string{text}
-
-	for _, sep := range separators {
-		var newSentences []string
-		for _, sent := range sentences {
-			parts := strings.Split(sent, sep)
-			for _, part := range parts {
-				trimmed := strings.TrimSpace(part)
-				if trimmed != "" {
-					newSentences = append(newSentences, trimmed)
-				}
-			}
-		}
-		sentences = newSentences
-	}
-
-	// 找出包含关键词的句子
-	var result []string
-	for _, sent := range sentences {
-		if strings.Contains(strings.ToLower(sent), lowerKeyword) {
-			// 限制长度，避免太长
-			if len(sent) > 100 {
-				sent = sent[:100] + "..."
-			}
-			result = append(result, sent)
-		}
-	}
-
-	return result
-}
-
-// removeDuplicates 移除重复字符串
-func removeDuplicates(items []string) []string {
-	seen := make(map[string]bool)
-	var result []string
-	for _, item := range items {
-		if !seen[item] {
-			seen[item] = true
-			result = append(result, item)
-		}
-	}
-	return result
-}
-
-// reasonMatchesExitPlan 检查平仓理由是否匹配退出计划
-func (s *AgentService) reasonMatchesExitPlan(reason string, exitPlan string) bool {
-	if exitPlan == "" {
-		return true
-	}
-
-	// 提取退出计划中的所有条件
-	conditions := s.extractExitConditions(exitPlan)
-	if len(conditions) == 0 {
-		// 如果无法识别任何条件，使用宽松匹配
-		return true
-	}
-
-	reasonLower := strings.ToLower(reason)
-
-	// 检查理由是否匹配任何一个退出条件
-	for _, condition := range conditions {
-		for _, keyword := range condition.Keywords {
-			if strings.Contains(reasonLower, strings.ToLower(keyword)) {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 func (s *AgentService) leverageBounds() (int, int) {
@@ -1135,4 +778,62 @@ func (r *DecisionResult) MarshalJSON() ([]byte, error) {
 		"prompt_tokens":     r.PromptTokens,
 		"completion_tokens": r.CompletionTokens,
 	})
+}
+
+// validateCloseReason 验证平仓理由的基础格式
+func (s *AgentService) validateCloseReason(reason string) error {
+	if reason == "" {
+		return fmt.Errorf("平仓理由不能为空")
+	}
+
+	if len(reason) < 20 {
+		return fmt.Errorf("平仓理由过于简单（当前 %d 字符），请详细说明触发的退出条件（至少 20 字符）", len(reason))
+	}
+
+	return nil
+}
+
+// validateExitPlanCompliance 验证平仓理由是否符合退出计划
+func (s *AgentService) validateExitPlanCompliance(position *models.Position, reason string) error {
+	// 如果没有退出计划，不进行验证
+	if position.ExitPlan == "" {
+		s.logger.Debug("position has no exit plan, skipping compliance check",
+			zap.String("symbol", position.Symbol))
+		return nil
+	}
+
+	// 定义退出计划相关的关键词
+	exitKeywords := []string{
+		// 中文关键词
+		"止损", "止盈", "目标价", "支撑", "阻力", "破位", "突破",
+		"趋势", "结构", "均线", "指标", "信号", "回调", "反弹",
+		"压力", "跌破", "涨破", "触发", "达到", "未达到",
+		// 英文关键词（支持混合使用）
+		"stop", "loss", "profit", "target", "support", "resistance",
+		"break", "trend", "structure", "signal",
+	}
+
+	// 检查理由是否包含至少一个关键词
+	if !containsAnyKeyword(reason, exitKeywords) {
+		return fmt.Errorf("平仓理由未体现退出计划的关键条件（如止损、止盈、支撑/阻力、结构破坏等）")
+	}
+
+	// 记录成功验证
+	s.logger.Info("exit plan compliance check passed",
+		zap.String("symbol", position.Symbol),
+		zap.String("exit_plan", position.ExitPlan),
+		zap.String("reason", reason))
+
+	return nil
+}
+
+// containsAnyKeyword 检查文本是否包含任意一个关键词（不区分大小写）
+func containsAnyKeyword(text string, keywords []string) bool {
+	lowerText := strings.ToLower(text)
+	for _, keyword := range keywords {
+		if strings.Contains(lowerText, strings.ToLower(keyword)) {
+			return true
+		}
+	}
+	return false
 }

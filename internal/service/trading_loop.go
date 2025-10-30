@@ -162,7 +162,8 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 	t.logger.Info("[STEP 2/6] Account metrics retrieved",
 		zap.Float64("total_balance", accountMetrics.TotalBalance),
 		zap.Float64("return_percent", accountMetrics.ReturnPercent),
-		zap.Float64("drawdown_from_peak", accountMetrics.DrawdownFromPeak))
+		zap.Float64("drawdown_from_peak", accountMetrics.DrawdownFromPeak),
+		zap.Float64("sharpe_ratio", accountMetrics.SharpeRatio))
 
 	// ========== Step 3: 同步持仓数据 ==========
 	t.logger.Info("[STEP 3/6] Syncing positions...")
@@ -179,6 +180,12 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 	// 获取历史交易
 	recentTrades, _ := t.agentService.GetRecentTrades(ctx, 10)
 
+	// 准备夏普比率（如果有效则传入）
+	var sharpeRatio *float64
+	if accountMetrics.SharpeRatio != 0.0 {
+		sharpeRatio = &accountMetrics.SharpeRatio
+	}
+
 	promptData := &PromptData{
 		StartTime:      t.startTime,
 		Iteration:      t.iteration,
@@ -186,6 +193,7 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 		MarketDataMap:  marketData,
 		Positions:      positions,
 		RecentTrades:   recentTrades,
+		SharpeRatio:    sharpeRatio,
 	}
 
 	prompt := t.promptService.GeneratePrompt(ctx, promptData)

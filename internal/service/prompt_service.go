@@ -39,6 +39,7 @@ type PromptData struct {
 	MarketDataMap  map[string]*MarketData
 	Positions      []*models.Position
 	RecentTrades   []*models.Trade
+	SharpeRatio    *float64 // 可选：夏普比率（用于性能反馈）
 }
 
 // GeneratePrompt 生成完整的AI提示词
@@ -59,13 +60,13 @@ func (s *PromptService) GeneratePrompt(ctx context.Context, data *PromptData) st
 
 	s.writeTradeHistory(&sb, data.RecentTrades)
 
+	s.writePerformanceMetrics(&sb, data.SharpeRatio)
+
 	return sb.String()
 }
 
 // writeConversationContext 写入通话背景
 func (s *PromptService) writeConversationContext(sb *strings.Builder, data *PromptData) {
-	sb.WriteString("## 通话背景\n\n")
-
 	now := time.Now().In(time.FixedZone("CST", 8*3600))
 	currentTime := now.Format("2006-01-02 15:04:05")
 
@@ -77,9 +78,8 @@ func (s *PromptService) writeConversationContext(sb *strings.Builder, data *Prom
 		}
 	}
 
-	sb.WriteString(fmt.Sprintf("- 开始交易以来已过去 %.0f 分钟\n", minutesElapsed))
-	sb.WriteString(fmt.Sprintf("- 当前时间：%s（中国时区）\n", currentTime))
-	sb.WriteString(fmt.Sprintf("- 本次模型调用序号：%d\n\n", data.Iteration))
+	sb.WriteString(fmt.Sprintf("**时间**: %s | **周期**: #%d | **运行**: %.0f分钟\n\n",
+		currentTime, data.Iteration, minutesElapsed))
 }
 
 // writeMarketOverview 写入市场数据
@@ -103,63 +103,64 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 			continue
 		}
 
-		sb.WriteString(fmt.Sprintf("### %s\n\n", symbol))
+		sb.WriteString(fmt.Sprintf("### %s\n", symbol))
+		sb.WriteString(fmt.Sprintf("价格$%.2f | 资金费率%.4f%%\n\n", data.CurrentPrice, data.FundingRate*100))
 
-		sb.WriteString(fmt.Sprintf("- 最新价格：$%.2f\n", data.CurrentPrice))
-		sb.WriteString(fmt.Sprintf("- 资金费率：%.4f%%\n\n", data.FundingRate*100))
-
-		// 多时间框架指标
-		sb.WriteString("### 多时间框架指标\n")
+		// 多时间框架指标（紧凑格式）
+		sb.WriteString("**多周期指标**\n")
 		timeframes := []string{"5m", "15m", "30m", "1h"}
 		for _, tf := range timeframes {
 			if ind, ok := data.Timeframes[tf]; ok {
-				sb.WriteString(fmt.Sprintf("**%s**: 价格=$%.2f, EMA20=$%.2f, EMA50=$%.2f, MACD=%.2f, RSI7=%.1f, RSI14=%.1f, 成交量=%.0f\n",
+				sb.WriteString(fmt.Sprintf("- %s: 价格$%.2f | EMA20/50: $%.2f/$%.2f | MACD=%.2f | RSI=%.1f/%.1f | 量%.0f\n",
 					tf, ind.Price, ind.EMA20, ind.EMA50, ind.MACD, ind.RSI7, ind.RSI14, ind.Volume))
 			}
 		}
 		sb.WriteString("\n")
 
-		// 日内序列
-		if data.IntradaySeries != nil {
-			sb.WriteString("### 日内序列（5分钟级别，最近10个数据点）\n")
-			sb.WriteString(fmt.Sprintf("中间价: %v\n", formatFloatArray(data.IntradaySeries.MidPrices)))
-			sb.WriteString(fmt.Sprintf("EMA20: %v\n", formatFloatArray(data.IntradaySeries.EMA20Series)))
-			sb.WriteString(fmt.Sprintf("MACD: %v\n", formatFloatArray(data.IntradaySeries.MACDSeries)))
-			sb.WriteString(fmt.Sprintf("RSI7: %v\n", formatFloatArray(data.IntradaySeries.RSI7Series)))
-			sb.WriteString(fmt.Sprintf("RSI14: %v\n", formatFloatArray(data.IntradaySeries.RSI14Series)))
+		// 日内序列（仅显示最新值和趋势）
+		if data.IntradaySeries != nil && len(data.IntradaySeries.MidPrices) > 0 {
+			sb.WriteString("**5分钟序列**（最近10点）\n")
+			sb.WriteString(fmt.Sprintf("- 价格: %v\n", formatFloatArray(data.IntradaySeries.MidPrices)))
+			sb.WriteString(fmt.Sprintf("- EMA20: %v\n", formatFloatArray(data.IntradaySeries.EMA20Series)))
+			sb.WriteString(fmt.Sprintf("- MACD: %v\n", formatFloatArray(data.IntradaySeries.MACDSeries)))
+			sb.WriteString(fmt.Sprintf("- RSI7/14: %v / %v\n",
+				formatFloatArray(data.IntradaySeries.RSI7Series),
+				formatFloatArray(data.IntradaySeries.RSI14Series)))
 			sb.WriteString("\n")
 		}
 
-		// 更长期上下文
+		// 1小时趋势
 		if data.LongerTermData != nil {
-			sb.WriteString("### 1小时趋势上下文\n")
-			sb.WriteString(fmt.Sprintf("EMA20 vs EMA50: %s\n", data.LongerTermData.EMA20vsEMA50))
-			sb.WriteString(fmt.Sprintf("ATR3 vs ATR14: %s\n", data.LongerTermData.ATR3vsATR14))
-			sb.WriteString(fmt.Sprintf("成交量 vs 平均: %s\n", data.LongerTermData.VolumeVsAvg))
-			sb.WriteString("\n")
+			sb.WriteString("**1小时趋势**\n")
+			sb.WriteString(fmt.Sprintf("- EMA20 vs EMA50: %s | ATR: %s | 成交量: %s\n\n",
+				data.LongerTermData.EMA20vsEMA50,
+				data.LongerTermData.ATR3vsATR14,
+				data.LongerTermData.VolumeVsAvg))
 		}
 	}
 }
 
 // writeAccountInfo 写入账户信息
 func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMetrics) {
-	sb.WriteString("## 账户与风险状态\n\n")
+	sb.WriteString("## 账户状态\n\n")
 
 	if metrics == nil {
 		sb.WriteString("暂无账户数据。\n\n")
 		return
 	}
 
-	sb.WriteString(fmt.Sprintf("- 初始账户净值: $%.2f\n", metrics.InitialBalance))
-	sb.WriteString(fmt.Sprintf("- 峰值账户净值: $%.2f\n", metrics.PeakBalance))
-	sb.WriteString(fmt.Sprintf("- 当前账户价值: $%.2f\n", metrics.TotalBalance))
-	sb.WriteString(fmt.Sprintf("- 账户回撤（从峰值）: %.2f%%\n", metrics.DrawdownFromPeak))
-	sb.WriteString(fmt.Sprintf("- 账户回撤（从初始）: %.2f%%\n", metrics.DrawdownFromInitial))
-	sb.WriteString(fmt.Sprintf("- 当前总收益率: %.2f%%\n", metrics.ReturnPercent))
-	sb.WriteString(fmt.Sprintf("- **可用资金: $%.2f**\n", metrics.Available))
-	sb.WriteString(fmt.Sprintf("- 未实现盈亏: $%.2f\n", metrics.UnrealisedPnl))
+	availablePercent := 0.0
+	if metrics.TotalBalance > 0 {
+		availablePercent = (metrics.Available / metrics.TotalBalance) * 100
+	}
 
-	sb.WriteString("\n")
+	sb.WriteString(fmt.Sprintf("净值$%.2f | 可用$%.2f (%.1f%%) | 收益%+.2f%% | 回撤%.2f%%(峰值) | 未实现盈亏$%+.2f\n\n",
+		metrics.TotalBalance,
+		metrics.Available,
+		availablePercent,
+		metrics.ReturnPercent,
+		metrics.DrawdownFromPeak,
+		metrics.UnrealisedPnl))
 }
 
 // writePositionInfo 写入持仓信息
@@ -178,39 +179,34 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 		return
 	}
 
-	maxHoldingHours := s.config.Trading.MaxHoldingHours
-
 	for i, pos := range positions {
 		pnlPercent := pos.CalculatePnlPercent()
 		holdingHours := pos.CalculateHoldingHours()
-		holdingCycles := pos.CalculateHoldingCycles()
-		remainingHours := pos.RemainingHours()
 
-		sb.WriteString(fmt.Sprintf("### 持仓 #%d\n", i+1))
-		sb.WriteString(fmt.Sprintf("- 币种: %s\n", pos.Symbol))
-		sb.WriteString(fmt.Sprintf("- 方向: %s\n", pos.Side))
-		sb.WriteString(fmt.Sprintf("- 杠杆: %dx\n", pos.Leverage))
-
-		sb.WriteString(fmt.Sprintf("- 未实现盈亏: $%.2f (%.2f%%)\n", pos.UnrealizedPnl, pnlPercent))
-		sb.WriteString(fmt.Sprintf("- 开仓价: $%.2f\n", pos.EntryPrice))
-		sb.WriteString(fmt.Sprintf("- 当前价: $%.2f\n", pos.CurrentPrice))
-		sb.WriteString(fmt.Sprintf("- 开仓时间: %s\n", pos.OpenedAt.Format("2006-01-02 15:04:05")))
-		sb.WriteString(fmt.Sprintf("- 已持仓: %.1f 小时 / %d 个周期\n", holdingHours, holdingCycles))
-		if maxHoldingHours > 0 {
-			sb.WriteString(fmt.Sprintf("- 持仓上限 %d 小时，剩余 %.1f 小时\n", maxHoldingHours, remainingHours))
+		// 计算持仓时长文本
+		holdingDuration := ""
+		if holdingHours < 1 {
+			holdingDuration = fmt.Sprintf("%.0f分钟", holdingHours*60)
+		} else {
+			hours := int(holdingHours)
+			minutes := int((holdingHours - float64(hours)) * 60)
+			if minutes > 0 {
+				holdingDuration = fmt.Sprintf("%d小时%d分", hours, minutes)
+			} else {
+				holdingDuration = fmt.Sprintf("%d小时", hours)
+			}
 		}
 
-		// 持仓管理提示
+		sb.WriteString(fmt.Sprintf("### %d. %s %s\n", i+1, pos.Symbol, strings.ToUpper(pos.Side)))
+		sb.WriteString(fmt.Sprintf("入场$%.2f → 当前$%.2f | 盈亏$%+.2f (%+.2f%%) | %dx杠杆 | 持仓%s\n",
+			pos.EntryPrice, pos.CurrentPrice, pos.UnrealizedPnl, pnlPercent, pos.Leverage, holdingDuration))
+
+		// 开仓理由和退出计划
 		if strings.TrimSpace(pos.EntryReason) != "" {
-			sb.WriteString(fmt.Sprintf("- 开仓理由：%s\n", pos.EntryReason))
+			sb.WriteString(fmt.Sprintf("**开仓理由**: %s\n", pos.EntryReason))
 		}
 		if strings.TrimSpace(pos.ExitPlan) != "" {
-			sb.WriteString(fmt.Sprintf("- 退出计划：%s\n", pos.ExitPlan))
-		}
-
-		// 时间警告
-		if maxHoldingHours > 0 && remainingHours <= 0 {
-			sb.WriteString("- ⚠️ 时间警告：已超过持仓上限\n")
+			sb.WriteString(fmt.Sprintf("**退出计划**: %s\n", pos.ExitPlan))
 		}
 
 		sb.WriteString("\n")
@@ -239,23 +235,14 @@ func (s *PromptService) writeTradeHistory(sb *strings.Builder, trades []*models.
 	sb.WriteString("\n")
 }
 
-// writeDecisionHistory 写入决策历史
-func (s *PromptService) writeDecisionHistory(sb *strings.Builder, decisions []*models.Decision) {
-	sb.WriteString("## 历史AI决策（最近3次）\n\n")
-
-	if len(decisions) == 0 {
-		sb.WriteString("暂无历史决策\n\n")
+// writePerformanceMetrics 写入性能指标
+func (s *PromptService) writePerformanceMetrics(sb *strings.Builder, sharpeRatio *float64) {
+	if sharpeRatio == nil {
 		return
 	}
 
-	for i, decision := range decisions {
-		sb.WriteString(fmt.Sprintf("### 决策 #%d\n", i+1))
-		sb.WriteString(fmt.Sprintf("- 时间: %s\n", decision.ExecutedAt.Format("2006-01-02 15:04:05")))
-		sb.WriteString(fmt.Sprintf("- 调用次数: %d\n", decision.Iteration))
-		sb.WriteString(fmt.Sprintf("- 账户价值: $%.2f\n", decision.AccountValue))
-		sb.WriteString(fmt.Sprintf("- 持仓数量: %d\n", decision.PositionCount))
-		sb.WriteString(fmt.Sprintf("- 决策内容:\n%s\n\n", decision.DecisionContent))
-	}
+	sb.WriteString("## 性能指标\n\n")
+	sb.WriteString(fmt.Sprintf("- 夏普比率: %.2f\n\n", *sharpeRatio))
 }
 
 // formatFloatArray 格式化浮点数组
@@ -291,7 +278,6 @@ func (s *PromptService) GetSystemInstructions() string {
 		"iteration_count":        "{{iteration_count}}",
 		"max_drawdown_percent":   formatFloat(tc.MaxDrawdownPercent),
 		"forced_flat_percent":    formatFloat(tc.MaxDrawdownPercent + 5),
-		"max_holding_hours":      fmt.Sprintf("%d", tc.MaxHoldingHours),
 		"max_positions":          fmt.Sprintf("%d", tc.MaxPositions),
 		"risk_percent_per_trade": formatFloat(tc.RiskPercentPerTrade),
 		"min_leverage":           fmt.Sprintf("%d", tc.MinLeverage),

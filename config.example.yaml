@@ -34,7 +34,7 @@ app:
     symbols: [ "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT" ]  # 策略关注的交易对列表。
     interval_minutes: 10  # 策略重新评估与下单的最小时间间隔（分钟）。
     max_drawdown_percent: 15  # 账户回撤的参考上限（模型需自行遵守）。
-    max_holding_hours: 36  # 单笔持仓建议的最长持有时长（小时）。
+    max_holding_hours: 0  # 单笔持仓时长限制（设为0表示不限制，由模型根据市场情况决定）。
     max_positions: 5  # 同时持有的最大仓位数量。
     max_leverage: 15  # 建仓使用的最高杠杆倍数。
     min_leverage: 3  # 建仓使用的最低杠杆倍数。
