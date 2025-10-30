@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -52,6 +53,8 @@ func (p *Position) CalculatePnlPercent() float64 {
 	return priceChange * float64(p.Leverage)
 }
 
-func (p *Position) CalculateHolding() time.Duration {
-	return time.Since(p.OpenedAt)
+func (p *Position) CalculateHoldingStr() string {
+	holding := time.Since(p.OpenedAt)
+	holdingStr, _ := strings.CutSuffix(holding.Round(time.Minute).String(), "0s")
+	return holdingStr
 }

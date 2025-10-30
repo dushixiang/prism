@@ -216,12 +216,11 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 
 	for i, pos := range positions {
 		pnlPercent := pos.CalculatePnlPercent()
-		holding := pos.CalculateHolding()
-		holdingStr, _ := strings.CutSuffix(holding.Round(time.Minute).String(), "0s")
+		holding := pos.CalculateHoldingStr()
 
 		sb.WriteString(fmt.Sprintf("### %d. %s %s\n", i+1, pos.Symbol, strings.ToUpper(pos.Side)))
 		sb.WriteString(fmt.Sprintf("入场$%.2f → 当前$%.2f | 盈亏$%+.2f (%+.2f%%) | %dx杠杆 | 持仓时间 %s\n\n",
-			pos.EntryPrice, pos.CurrentPrice, pos.UnrealizedPnl, pnlPercent, pos.Leverage, holdingStr))
+			pos.EntryPrice, pos.CurrentPrice, pos.UnrealizedPnl, pnlPercent, pos.Leverage, holding))
 
 		// 开仓理由和退出计划
 		if strings.TrimSpace(pos.EntryReason) != "" {
