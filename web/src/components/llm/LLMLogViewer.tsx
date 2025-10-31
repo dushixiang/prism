@@ -1,5 +1,6 @@
 import {useState} from 'react';
 import {useQuery} from '@tanstack/react-query';
+import copy from 'copy-to-clipboard';
 import {
     Sheet,
     SheetContent,
@@ -19,6 +20,13 @@ interface LLMLogViewerProps {
 export const LLMLogViewer = ({decisionId}: LLMLogViewerProps) => {
     const [isOpen, setIsOpen] = useState(false);
     const [selectedRound, setSelectedRound] = useState<number | null>(null);
+    const [copiedId, setCopiedId] = useState<string | null>(null);
+
+    const handleCopy = (text: string, id: string) => {
+        copy(text);
+        setCopiedId(id);
+        setTimeout(() => setCopiedId(null), 2000);
+    };
 
     const {
         data: logsData,
@@ -128,7 +136,15 @@ export const LLMLogViewer = ({decisionId}: LLMLogViewerProps) => {
                                                 {/* 系统提示词 */}
                                                 {log.round_number === 1 && log.system_prompt && (
                                                     <div>
-                                                        <div className="mb-2 text-xs font-semibold text-slate-700">系统提示词</div>
+                                                        <div className="mb-2 flex items-center justify-between">
+                                                            <div className="text-xs font-semibold text-slate-700">系统提示词</div>
+                                                            <button
+                                                                onClick={() => handleCopy(log.system_prompt, `system-${log.id}`)}
+                                                                className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 transition-colors"
+                                                            >
+                                                                {copiedId === `system-${log.id}` ? '✓ 已复制' : '📋 复制'}
+                                                            </button>
+                                                        </div>
                                                         <details className="group">
                                                             <summary className="cursor-pointer text-xs text-blue-600 hover:text-blue-800">
                                                                 点击展开查看 ({log.system_prompt.length} 字符)
@@ -143,7 +159,15 @@ export const LLMLogViewer = ({decisionId}: LLMLogViewerProps) => {
                                                 {/* 用户提示词 */}
                                                 {log.round_number === 1 && log.user_prompt && (
                                                     <div>
-                                                        <div className="mb-2 text-xs font-semibold text-slate-700">用户提示词</div>
+                                                        <div className="mb-2 flex items-center justify-between">
+                                                            <div className="text-xs font-semibold text-slate-700">用户提示词</div>
+                                                            <button
+                                                                onClick={() => handleCopy(log.user_prompt, `user-${log.id}`)}
+                                                                className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 transition-colors"
+                                                            >
+                                                                {copiedId === `user-${log.id}` ? '✓ 已复制' : '📋 复制'}
+                                                            </button>
+                                                        </div>
                                                         <details className="group">
                                                             <summary className="cursor-pointer text-xs text-blue-600 hover:text-blue-800">
                                                                 点击展开查看 ({log.user_prompt.length} 字符)
@@ -226,6 +250,7 @@ export const LLMLogViewer = ({decisionId}: LLMLogViewerProps) => {
 
                                                 {/* Token统计 */}
                                                 <div className="flex flex-wrap gap-3 border-t border-slate-200 pt-3 text-xs text-slate-600">
+                                                    {log.model && <span className="font-medium text-blue-600">模型: {log.model}</span>}
                                                     <span>输入: {log.prompt_tokens}</span>
                                                     <span>输出: {log.completion_tokens}</span>
                                                     <span>总计: {log.total_tokens}</span>
