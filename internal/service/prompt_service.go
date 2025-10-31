@@ -113,14 +113,35 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 		}
 
 		sb.WriteString(fmt.Sprintf("### %s\n", symbol))
-		sb.WriteString(fmt.Sprintf("价格$%.2f | 资金费率%.4f%%\n\n", data.CurrentPrice, data.FundingRate*100))
+
+		// 根据价格确定精度
+		pricePrecision := getPricePrecision(data.CurrentPrice)
+		priceFormat := fmt.Sprintf("%%.%df", pricePrecision)
+
+		sb.WriteString(fmt.Sprintf("价格$"+priceFormat+" | 资金费率%.4f%%\n\n", data.CurrentPrice, data.FundingRate*100))
 
 		// 多时间框架指标（紧凑格式）
 		sb.WriteString("**多周期指标**\n")
 		timeframes := []string{"15m", "30m", "1h"}
 		for _, tf := range timeframes {
 			if ind, ok := data.Timeframes[tf]; ok {
-				sb.WriteString(fmt.Sprintf("- %s: 价格$%.2f | EMA20/50: $%.2f/$%.2f | MACD=%.2f(信号%.2f,柱%.2f) | RSI7/14=%.1f/%.1f | ATR3/14=%.2f/%.2f | 成交量=%.0f(均%.0f)\n",
+				// ATR精度：使用价格精度+2（因为ATR通常比价格小1-2个数量级）
+				atrPrecision := pricePrecision + 2
+				if atrPrecision > 8 {
+					atrPrecision = 8
+				}
+
+				// MACD精度：对于低价币使用更高精度
+				macdPrecision := 4
+				if data.CurrentPrice < 1.0 {
+					macdPrecision = 6
+				}
+
+				// 动态构建格式字符串
+				formatStr := fmt.Sprintf("- %%s: 价格$%s | EMA20/50: $%s/$%s | MACD=%%.%df(信号%%.%df,柱%%.%df) | RSI7/14=%%.1f/%%.1f | ATR3/14=%%.%df/%%.%df | 成交量=%%.0f(均%%.0f)\n",
+					priceFormat, priceFormat, priceFormat, macdPrecision, macdPrecision, macdPrecision, atrPrecision, atrPrecision)
+
+				sb.WriteString(fmt.Sprintf(formatStr,
 					tf, ind.Price, ind.EMA20, ind.EMA50,
 					ind.MACD, ind.MACDSignal, ind.MACDHist,
 					ind.RSI7, ind.RSI14,
