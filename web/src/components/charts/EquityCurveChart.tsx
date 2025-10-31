@@ -66,12 +66,6 @@ export const EquityCurveChart = ({data, initialBalance}: EquityCurveChartProps) 
                 timeVisible: true,
                 secondsVisible: false,
             },
-            localization: {
-                timeFormatter: (time: UTCTimestamp | BusinessDay) => {
-                    const seconds = toEpochSeconds(time as Time);
-                    return seconds ? formatTimestampToCST(seconds) : '';
-                },
-            },
             crosshair: {
                 mode: 1,
                 vertLine: {
@@ -109,54 +103,16 @@ export const EquityCurveChart = ({data, initialBalance}: EquityCurveChartProps) 
         // 转换数据格式，并按时间排序、去重
         console.log('Original data points:', data.length);
 
-        const chartDataMap = new Map<number, number>();
-        data.forEach((point, index) => {
-            const timeSeconds = Math.floor(point.timestamp / 1000);
-            if (chartDataMap.has(timeSeconds)) {
-                console.warn(`Duplicate timestamp at index ${index}:`, timeSeconds, 'old value:', chartDataMap.get(timeSeconds), 'new value:', point.total_balance);
-            }
-            // 如果有重复时间戳，保留最新的值
-            chartDataMap.set(timeSeconds, point.total_balance);
-        });
-
         // 转换为数组并按时间升序排序
-        let chartData = Array.from(chartDataMap.entries())
-            .sort(([timeA], [timeB]) => timeA - timeB)
-            .map(([time, value]) => ({
-                time: time as Time,
-                value: value,
+        const chartData = data
+            .map((item) => ({
+                time: item.timestamp as UTCTimestamp,
+                value: item.total_balance,
             }));
-
-        // 额外的安全检查：过滤掉任何可能的重复时间戳
-        const seenTimes = new Set<number>();
-        chartData = chartData.filter((point) => {
-            const time = point.time as number;
-            if (seenTimes.has(time)) {
-                console.warn('Duplicate timestamp detected and removed:', time);
-                return false;
-            }
-            seenTimes.add(time);
-            return true;
-        });
 
         if (chartData.length === 0) {
             console.error('No valid chart data after filtering');
             return;
-        }
-
-        // 最终验证：确保数据严格升序
-        for (let i = 1; i < chartData.length; i++) {
-            const prevTime = chartData[i - 1].time as number;
-            const currTime = chartData[i].time as number;
-            if (currTime <= prevTime) {
-                console.error('Data not strictly ascending at index', i, 'prev:', prevTime, 'curr:', currTime);
-            }
-        }
-
-        console.log('Final chart data points:', chartData.length);
-        if (chartData.length > 0) {
-            console.log('First point:', chartData[0]);
-            console.log('Last point:', chartData[chartData.length - 1]);
         }
 
         lineSeries.setData(chartData);

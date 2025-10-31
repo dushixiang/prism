@@ -1,6 +1,7 @@
 import {useState} from 'react';
 import {useQuery} from '@tanstack/react-query';
 import copy from 'copy-to-clipboard';
+import {Copy, Check, Search, CheckCircle, Phone, XCircle} from 'lucide-react';
 import {
     Sheet,
     SheetContent,
@@ -42,9 +43,10 @@ export const LLMLogViewer = ({decisionId}: LLMLogViewerProps) => {
         <Sheet open={isOpen} onOpenChange={setIsOpen}>
             <SheetTrigger asChild>
                 <button
-                    className="mt-2 w-full rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 transition hover:bg-blue-100"
+                    className="mt-2 flex w-full items-center justify-center gap-1.5 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 transition hover:bg-blue-100 cursor-pointer"
                 >
-                    🔍 查看 LLM 通信日志
+                    <Search className="h-3.5 w-3.5" />
+                    <span>查看 LLM 通信日志</span>
                 </button>
             </SheetTrigger>
             <SheetContent side="right" className="w-full p-0 sm:max-w-[600px] lg:max-w-[800px]">
@@ -124,7 +126,10 @@ export const LLMLogViewer = ({decisionId}: LLMLogViewerProps) => {
                                                     if (!hasContent && !log.error) {
                                                         return (
                                                             <div className="rounded bg-slate-50 p-4 text-center text-xs text-slate-500">
-                                                                <div className="mb-1">✓ AI 已完成响应</div>
+                                                                <div className="mb-1 flex items-center justify-center gap-1">
+                                                                    <CheckCircle className="h-3.5 w-3.5" />
+                                                                    <span>AI 已完成响应</span>
+                                                                </div>
                                                                 <div className="text-slate-400">本轮无额外输出内容</div>
                                                             </div>
                                                         );
@@ -140,9 +145,19 @@ export const LLMLogViewer = ({decisionId}: LLMLogViewerProps) => {
                                                             <div className="text-xs font-semibold text-slate-700">系统提示词</div>
                                                             <button
                                                                 onClick={() => handleCopy(log.system_prompt, `system-${log.id}`)}
-                                                                className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 transition-colors"
+                                                                className="flex items-center gap-1 rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
                                                             >
-                                                                {copiedId === `system-${log.id}` ? '✓ 已复制' : '📋 复制'}
+                                                                {copiedId === `system-${log.id}` ? (
+                                                                    <>
+                                                                        <Check className="h-3 w-3" />
+                                                                        <span>已复制</span>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <Copy className="h-3 w-3" />
+                                                                        <span>复制</span>
+                                                                    </>
+                                                                )}
                                                             </button>
                                                         </div>
                                                         <details className="group">
@@ -163,9 +178,19 @@ export const LLMLogViewer = ({decisionId}: LLMLogViewerProps) => {
                                                             <div className="text-xs font-semibold text-slate-700">用户提示词</div>
                                                             <button
                                                                 onClick={() => handleCopy(log.user_prompt, `user-${log.id}`)}
-                                                                className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 transition-colors"
+                                                                className="flex items-center gap-1 rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
                                                             >
-                                                                {copiedId === `user-${log.id}` ? '✓ 已复制' : '📋 复制'}
+                                                                {copiedId === `user-${log.id}` ? (
+                                                                    <>
+                                                                        <Check className="h-3 w-3" />
+                                                                        <span>已复制</span>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <Copy className="h-3 w-3" />
+                                                                        <span>复制</span>
+                                                                    </>
+                                                                )}
                                                             </button>
                                                         </div>
                                                         <details className="group">
@@ -202,8 +227,9 @@ export const LLMLogViewer = ({decisionId}: LLMLogViewerProps) => {
                                                                             key={idx}
                                                                             className="rounded bg-amber-50 p-3"
                                                                         >
-                                                                            <div className="mb-1 font-semibold text-amber-700">
-                                                                                📞 {call.function}
+                                                                            <div className="mb-1 flex items-center gap-1 font-semibold text-amber-700">
+                                                                                <Phone className="h-3.5 w-3.5" />
+                                                                                <span>{call.function}</span>
                                                                             </div>
                                                                             <pre className="overflow-x-auto text-xs text-amber-900">
                                                                                 {JSON.stringify(call.arguments, null, 2)}
@@ -260,8 +286,9 @@ export const LLMLogViewer = ({decisionId}: LLMLogViewerProps) => {
 
                                                 {/* 错误信息 */}
                                                 {log.error && (
-                                                    <div className="rounded bg-rose-50 p-3 text-xs text-rose-700">
-                                                        ❌ {log.error}
+                                                    <div className="flex items-start gap-1.5 rounded bg-rose-50 p-3 text-xs text-rose-700">
+                                                        <XCircle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                                                        <span>{log.error}</span>
                                                     </div>
                                                 )}
                                             </div>

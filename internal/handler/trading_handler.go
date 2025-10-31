@@ -223,7 +223,7 @@ func (h *TradingHandler) GetEquityCurve(c echo.Context) error {
 	data := make([]map[string]interface{}, 0, len(histories))
 	for _, h := range histories {
 		data = append(data, map[string]interface{}{
-			"timestamp":             h.RecordedAt.Unix() * 1000, // 转换为毫秒时间戳
+			"timestamp":             h.RecordedAt.Unix(), // 转换为秒时间戳
 			"time":                  h.RecordedAt,
 			"total_balance":         h.TotalBalance,
 			"available":             h.Available,
