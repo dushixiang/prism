@@ -144,7 +144,7 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 					data.IntradaySeries.ClosePrices)))
 
 			// 指标保留，但只显示关键的
-			sb.WriteString(fmt.Sprintf("- EMA20: %v\n", formatFloatArray(data.IntradaySeries.EMA20Series)))
+			sb.WriteString(fmt.Sprintf("- EMA20: %v\n", formatPriceArray(data.IntradaySeries.EMA20Series)))
 			sb.WriteString(fmt.Sprintf("- MACD: %v\n", formatFloatArray(data.IntradaySeries.MACDSeries)))
 			sb.WriteString(fmt.Sprintf("- RSI14: %v\n", formatFloatArray(data.IntradaySeries.RSI14Series)))
 			sb.WriteString("\n")
@@ -293,7 +293,21 @@ func (s *PromptService) writePerformanceMetrics(sb *strings.Builder, sharpeRatio
 	sb.WriteString(fmt.Sprintf("- 夏普比率: %.2f\n\n", *sharpeRatio))
 }
 
-// formatFloatArray 格式化浮点数组
+// getPricePrecision 根据价格范围获取合适的小数精度
+func getPricePrecision(avgPrice float64) int {
+	switch {
+	case avgPrice >= 100:
+		return 1 // 大于100: 保留1位 (如 BTC: 50000.1)
+	case avgPrice >= 1:
+		return 2 // 1-100: 保留2位 (如 ETH: 2500.12)
+	case avgPrice >= 0.01:
+		return 4 // 0.01-1: 保留4位 (如某些山寨币: 0.1234)
+	default:
+		return 6 // 小于0.01: 保留6位 (如 SHIB: 0.000012)
+	}
+}
+
+// formatFloatArray 格式化浮点数组（固定2位小数，用于RSI/MACD等指标）
 func formatFloatArray(arr []float64) string {
 	if len(arr) == 0 {
 		return "[]"
@@ -306,32 +320,42 @@ func formatFloatArray(arr []float64) string {
 	return "[" + strings.Join(strs, ", ") + "]"
 }
 
+// formatPriceArray 格式化价格数组（自适应精度）
+func formatPriceArray(arr []float64) string {
+	if len(arr) == 0 {
+		return "[]"
+	}
+
+	// 计算平均值以确定精度
+	avgPrice := 0.0
+	for _, v := range arr {
+		avgPrice += v
+	}
+	avgPrice /= float64(len(arr))
+
+	precision := getPricePrecision(avgPrice)
+	formatStr := fmt.Sprintf("%%.%df", precision)
+	strs := make([]string, len(arr))
+	for i, v := range arr {
+		strs[i] = fmt.Sprintf(formatStr, v)
+	}
+	return "[" + strings.Join(strs, ", ") + "]"
+}
+
 // formatOHLCArray 格式化OHLC数组为紧凑格式
 func formatOHLCArray(opens, highs, lows, closes []float64) string {
 	if len(opens) == 0 || len(opens) != len(highs) || len(opens) != len(lows) || len(opens) != len(closes) {
 		return "[]"
 	}
 
-	// 自动检测精度：根据平均价格大小决定小数位数
+	// 计算平均价格以确定精度
 	avgPrice := 0.0
 	for i := range closes {
 		avgPrice += closes[i]
 	}
 	avgPrice /= float64(len(closes))
 
-	// 根据价格范围选择精度
-	var precision int
-	switch {
-	case avgPrice >= 100:
-		precision = 1 // 大于100: 保留1位 (如 BTC: 50000.1)
-	case avgPrice >= 1:
-		precision = 2 // 1-100: 保留2位 (如 ETH: 2500.12)
-	case avgPrice >= 0.01:
-		precision = 4 // 0.01-1: 保留4位 (如某些山寨币: 0.1234)
-	default:
-		precision = 6 // 小于0.01: 保留6位 (如 SHIB: 0.000012)
-	}
-
+	precision := getPricePrecision(avgPrice)
 	formatStr := fmt.Sprintf("[%%.%df|%%.%df|%%.%df|%%.%df]", precision, precision, precision, precision)
 
 	var sb strings.Builder
