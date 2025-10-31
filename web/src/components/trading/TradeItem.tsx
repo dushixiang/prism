@@ -52,6 +52,12 @@ export const TradeItem = ({trade}: TradeItemProps) => {
                         </span>
                     </div>
                 )}
+                {trade.reason && (
+                    <div className="mt-3 border-t border-dashed border-slate-200 pt-3">
+                        <div className="text-xs text-slate-500 mb-1">{isClose ? '平仓原因' : '开仓原因'}:</div>
+                        <div className="text-xs text-slate-700 leading-relaxed">{trade.reason}</div>
+                    </div>
+                )}
             </div>
         </div>
     );

@@ -528,6 +528,7 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 		Quantity:   executedQty,
 		Leverage:   leverage,
 		Fee:        fee,
+		Reason:     reason,
 		OrderID:    fmt.Sprintf("%d", order.OrderID),
 		ExecutedAt: time.Now(),
 	}
@@ -665,6 +666,7 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 		Leverage:   targetPosition.Leverage,
 		Fee:        fee,
 		Pnl:        pnl,
+		Reason:     reason,
 		OrderID:    fmt.Sprintf("%d", order.OrderID),
 		PositionID: targetPosition.ID,
 		ExecutedAt: time.Now(),

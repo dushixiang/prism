@@ -17,6 +17,7 @@ type Trade struct {
 	Leverage   int            `gorm:"type:int" json:"leverage"`                      // 杠杆倍数
 	Fee        float64        `gorm:"type:decimal(20,8)" json:"fee"`                 // 手续费
 	Pnl        float64        `gorm:"type:decimal(20,8)" json:"pnl"`                 // 平仓盈亏（仅平仓时有值）
+	Reason     string         `gorm:"type:text" json:"reason"`                       // 开仓/平仓原因
 	OrderID    string         `gorm:"type:varchar(50);index" json:"order_id"`        // 订单ID
 	PositionID string         `gorm:"type:varchar(26);index" json:"position_id"`     // 关联的持仓ID
 	ExecutedAt time.Time      `gorm:"not null;index" json:"executed_at"`             // 执行时间

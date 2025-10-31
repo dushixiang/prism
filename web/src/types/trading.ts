@@ -87,6 +87,7 @@ export type Trade = {
     leverage: number;
     fee: number;
     pnl: number;
+    reason: string;
     executed_at: string;
 };
 
