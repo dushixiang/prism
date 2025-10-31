@@ -142,11 +142,6 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 					data.IntradaySeries.HighPrices,
 					data.IntradaySeries.LowPrices,
 					data.IntradaySeries.ClosePrices)))
-
-			// 指标保留，但只显示关键的
-			sb.WriteString(fmt.Sprintf("- EMA20: %v\n", formatPriceArray(data.IntradaySeries.EMA20Series)))
-			sb.WriteString(fmt.Sprintf("- MACD: %v\n", formatFloatArray(data.IntradaySeries.MACDSeries)))
-			sb.WriteString(fmt.Sprintf("- RSI14: %v\n", formatFloatArray(data.IntradaySeries.RSI14Series)))
 			sb.WriteString("\n")
 		}
 
