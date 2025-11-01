@@ -301,6 +301,20 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 		availablePercent = (metrics.Available / metrics.TotalBalance) * 100
 	}
 
+	tc := s.config.Trading
+	formatPercent := func(val float64) string {
+		str := fmt.Sprintf("%.2f", val)
+		str = strings.TrimRight(str, "0")
+		str = strings.TrimRight(str, ".")
+		if str == "" {
+			return "0"
+		}
+		return str
+	}
+
+	drawdownWarn := tc.MaxDrawdownPercent
+	forcedFlat := tc.MaxDrawdownPercent + 5
+
 	// 资金情况
 	sb.WriteString(fmt.Sprintf("**资金**: 净值 $%.2f (初始$%.2f, 峰值$%.2f) | 可用 $%.2f (%.1f%%)\n",
 		metrics.TotalBalance,
@@ -321,10 +335,13 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 
 	// 回撤与夏普比率
 	drawdownEmoji := "✅"
-	if metrics.DrawdownFromPeak > 5 {
-		drawdownEmoji = "⚠️"
-	} else if metrics.DrawdownFromPeak > 10 {
+	riskNote := ""
+	if forcedFlat > 0 && metrics.DrawdownFromPeak >= forcedFlat {
 		drawdownEmoji = "🔴"
+		riskNote = fmt.Sprintf(" | 已触发强制清仓阈值%s%%，需立即执行全平", formatPercent(forcedFlat))
+	} else if drawdownWarn > 0 && metrics.DrawdownFromPeak >= drawdownWarn {
+		drawdownEmoji = "⚠️"
+		riskNote = fmt.Sprintf(" | 回撤达到警戒线%s%%，请暂停新开仓并复盘风控", formatPercent(drawdownWarn))
 	}
 
 	sharpeEmoji := "📊"
@@ -338,12 +355,13 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 		}
 	}
 
-	sb.WriteString(fmt.Sprintf("**风险**: %s 回撤 %.2f%%(峰值) / %.2f%%(初始) | %s 夏普比率 %s\n\n",
+	sb.WriteString(fmt.Sprintf("**风险**: %s 回撤 %.2f%%(峰值) / %.2f%%(初始) | %s 夏普比率 %s%s\n\n",
 		drawdownEmoji,
 		metrics.DrawdownFromPeak,
 		metrics.DrawdownFromInitial,
 		sharpeEmoji,
-		sharpeText))
+		sharpeText,
+		riskNote))
 }
 
 // writePositionInfo 写入持仓信息
@@ -390,8 +408,17 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []model
 		sb.WriteString("## 新开仓建议\n\n")
 
 		sb.WriteString(fmt.Sprintf("**剩余可开仓位**: %d个\n", remainingSlots))
-		sb.WriteString(fmt.Sprintf("**总可用余额**: $%.2f\n\n", metrics.Available))
-		sb.WriteString("**决策要求**：请根据信号质量，自行决定新仓位的保证金大小，以最大化利用可用资金。\n\n")
+		sb.WriteString(fmt.Sprintf("**总可用余额**: $%.2f\n", metrics.Available))
+
+		referenceDenom := currentCount + remainingSlots
+		referenceMargin := 0.0
+		if referenceDenom > 0 {
+			referenceMargin = metrics.Available / float64(referenceDenom)
+		}
+
+		sb.WriteString(fmt.Sprintf("**单仓参考额度**: $%.2f ≈ 可用余额 / (%d持仓 + %d剩余) (仅供参考)\n",
+			referenceMargin, currentCount, remainingSlots))
+		sb.WriteString("**仓位规划**：请遵循系统指令中的“仓位管理”原则进行决策。\n\n")
 	}
 }
 
@@ -635,9 +662,6 @@ func (s *PromptService) GetSystemInstructions() string {
 	}
 
 	replacements := map[string]interface{}{
-		"minutes_elapsed":      "{{minutes_elapsed}}",
-		"current_time":         "{{current_time}}",
-		"iteration_count":      "{{iteration_count}}",
 		"max_drawdown_percent": formatFloat(tc.MaxDrawdownPercent),
 		"forced_flat_percent":  formatFloat(tc.MaxDrawdownPercent + 5),
 		"max_positions":        fmt.Sprintf("%d", tc.MaxPositions),
