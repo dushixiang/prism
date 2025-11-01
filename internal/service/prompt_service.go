@@ -244,7 +244,7 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 				}
 				volatility := (highPrice - lowPrice) / lowPrice * 100
 
-				sb.WriteString(fmt.Sprintf("**价格走势** (%.1f小时): ", hours))
+				sb.WriteString(fmt.Sprintf("**价格走势 (15m周期, %.1f小时)**: ", hours))
 				sb.WriteString(fmt.Sprintf("起 "+priceFormat+" → 终 "+priceFormat+" (%+.2f%%) | 区间 ["+priceFormat+"-"+priceFormat+"] 波幅%.2f%%\n",
 					startPrice, endPrice, priceChange, lowPrice, highPrice, volatility))
 
