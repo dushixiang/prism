@@ -62,8 +62,6 @@ func (s *PromptService) GeneratePrompt(ctx context.Context, data *PromptData) st
 
 	s.writeTradeHistory(&sb, data.RecentTrades)
 
-	s.writePerformanceMetrics(&sb, data.AccountMetrics)
-
 	return sb.String()
 }
 
@@ -114,13 +112,38 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 			continue
 		}
 
-		sb.WriteString(fmt.Sprintf("### %s\n", symbol))
-
 		// 根据价格确定精度
 		pricePrecision := getPricePrecision(data.CurrentPrice)
 		priceFormat := fmt.Sprintf("%%.%df", pricePrecision)
 
-		sb.WriteString(fmt.Sprintf("价格$"+priceFormat+" | 资金费率%.4f%%\n\n", data.CurrentPrice, data.FundingRate*100))
+		// 判断趋势方向（基于1h EMA）
+		trendEmoji := "→" // 震荡
+		trendText := "震荡"
+		if data.LongerTermData != nil {
+			if data.LongerTermData.EMA20vsEMA50 == "above" {
+				trendEmoji = "↗"
+				trendText = "上涨"
+			} else if data.LongerTermData.EMA20vsEMA50 == "below" {
+				trendEmoji = "↘"
+				trendText = "下跌"
+			}
+		}
+
+		// 获取15m指标判断短期状态
+		var shortTermStatus string
+		if ind15m, ok := data.Timeframes["15m"]; ok {
+			if ind15m.RSI14 > 70 {
+				shortTermStatus = " [超买]"
+			} else if ind15m.RSI14 < 30 {
+				shortTermStatus = " [超卖]"
+			}
+		}
+
+		sb.WriteString(fmt.Sprintf("### %s %s %s%s\n",
+			symbol, trendEmoji, trendText, shortTermStatus))
+
+		sb.WriteString(fmt.Sprintf("💰 $"+priceFormat+" | 📊 资金费率 %.4f%%\n\n",
+			data.CurrentPrice, data.FundingRate*100))
 
 		// 多时间框架指标（紧凑格式）
 		sb.WriteString("**多周期指标**\n")
@@ -139,32 +162,101 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 					macdPrecision = 6
 				}
 
+				// ⭐ 计算价格与 EMA20 的偏离度（建议1）
+				var emaDeviation float64
+				var emaDeviationStr string
+				if ind.EMA20 > 0 {
+					emaDeviation = (ind.Price - ind.EMA20) / ind.EMA20 * 100
+					if emaDeviation > 2.0 {
+						emaDeviationStr = fmt.Sprintf(" 🔴偏离EMA20 %+.2f%%", emaDeviation)
+					} else if emaDeviation < -2.0 {
+						emaDeviationStr = fmt.Sprintf(" 🔵偏离EMA20 %+.2f%%", emaDeviation)
+					} else {
+						emaDeviationStr = fmt.Sprintf(" 偏离EMA20 %+.2f%%", emaDeviation)
+					}
+				}
+
+				// ⭐ 关键信号标注（建议3）
+				var signals []string
+
+				// RSI 信号
+				if ind.RSI14 > 70 {
+					signals = append(signals, "RSI超买")
+				} else if ind.RSI14 < 30 {
+					signals = append(signals, "RSI超卖")
+				}
+
+				// MACD 信号
+				if ind.MACD > 0 && ind.MACDSignal > 0 && ind.MACD > ind.MACDSignal {
+					signals = append(signals, "MACD金叉")
+				} else if ind.MACD < 0 && ind.MACDSignal < 0 && ind.MACD < ind.MACDSignal {
+					signals = append(signals, "MACD死叉")
+				}
+
+				// 成交量异常
+				if ind.Volume > ind.AvgVolume*2 {
+					signals = append(signals, "放量")
+				} else if ind.Volume < ind.AvgVolume*0.5 {
+					signals = append(signals, "缩量")
+				}
+
+				signalStr := ""
+				if len(signals) > 0 {
+					signalStr = " ⚡[" + strings.Join(signals, ",") + "]"
+				}
+
 				// 动态构建格式字符串
-				formatStr := fmt.Sprintf("- %%s: 价格$%s | EMA20/50: $%s/$%s | MACD=%%.%df(信号%%.%df,柱%%.%df) | RSI7/14=%%.1f/%%.1f | ATR3/14=%%.%df/%%.%df | 成交量=%%.0f(均%%.0f)\n",
+				formatStr := fmt.Sprintf("- %%s: 价格$%s | EMA20/50: $%s/$%s%%s | MACD=%%.%df(信号%%.%df,柱%%.%df) | RSI7/14=%%.1f/%%.1f | ATR3/14=%%.%df/%%.%df | 成交量=%%.0f(均%%.0f)%%s\n",
 					priceFormat, priceFormat, priceFormat, macdPrecision, macdPrecision, macdPrecision, atrPrecision, atrPrecision)
 
 				sb.WriteString(fmt.Sprintf(formatStr,
-					tf, ind.Price, ind.EMA20, ind.EMA50,
+					tf, ind.Price, ind.EMA20, ind.EMA50, emaDeviationStr,
 					ind.MACD, ind.MACDSignal, ind.MACDHist,
 					ind.RSI7, ind.RSI14,
 					ind.ATR3, ind.ATR14,
-					ind.Volume, ind.AvgVolume))
+					ind.Volume, ind.AvgVolume, signalStr))
 			}
 		}
 		sb.WriteString("\n")
 
-		// 日内序列（15分钟K线）- 紧凑格式
+		// 价格走势概览 - 只显示收盘价趋势
 		if data.IntradaySeries != nil && len(data.IntradaySeries.ClosePrices) > 0 {
-			count := len(data.IntradaySeries.OpenPrices)
+			closes := data.IntradaySeries.ClosePrices
+			count := len(closes)
 			hours := float64(count) * 15.0 / 60.0
-			sb.WriteString(fmt.Sprintf("**15分钟K线序列**（最近%d根，约%.1f小时）\n", count, hours))
 
-			// OHLC合并为紧凑格式: [O|H|L|C]
-			sb.WriteString(fmt.Sprintf("- K线[O|H|L|C]: %s\n",
-				formatOHLCArray(data.IntradaySeries.OpenPrices,
-					data.IntradaySeries.HighPrices,
-					data.IntradaySeries.LowPrices,
-					data.IntradaySeries.ClosePrices)))
+			// 计算最近6小时的价格变化
+			if count > 0 {
+				startPrice := closes[0]
+				endPrice := closes[count-1]
+				priceChange := (endPrice - startPrice) / startPrice * 100
+
+				// 找出最高和最低价
+				highPrice := closes[0]
+				lowPrice := closes[0]
+				for _, price := range closes {
+					if price > highPrice {
+						highPrice = price
+					}
+					if price < lowPrice {
+						lowPrice = price
+					}
+				}
+				volatility := (highPrice - lowPrice) / lowPrice * 100
+
+				sb.WriteString(fmt.Sprintf("**价格走势** (%.1f小时): ", hours))
+				sb.WriteString(fmt.Sprintf("起 "+priceFormat+" → 终 "+priceFormat+" (%+.2f%%) | 区间 ["+priceFormat+"-"+priceFormat+"] 波幅%.2f%%\n",
+					startPrice, endPrice, priceChange, lowPrice, highPrice, volatility))
+
+				// 只显示最近8根K线的收盘价（约2小时），用于观察短期趋势
+				recentCount := 8
+				if count < recentCount {
+					recentCount = count
+				}
+				recentCloses := closes[count-recentCount:]
+				sb.WriteString(fmt.Sprintf("- 近期收盘价(最近%d根): %s\n",
+					recentCount, formatPriceArray(recentCloses)))
+			}
 			sb.WriteString("\n")
 		}
 
@@ -204,16 +296,49 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 		availablePercent = (metrics.Available / metrics.TotalBalance) * 100
 	}
 
-	sb.WriteString(fmt.Sprintf("净值$%.2f(初始$%.2f,峰值$%.2f) | 可用$%.2f(%.1f%%) | 收益%+.2f%% | 回撤%.2f%%(峰值)/%.2f%%(初始) | 未实现盈亏$%+.2f\n\n",
+	// 资金情况
+	sb.WriteString(fmt.Sprintf("**资金**: 净值 $%.2f (初始$%.2f, 峰值$%.2f) | 可用 $%.2f (%.1f%%)\n",
 		metrics.TotalBalance,
 		metrics.InitialBalance,
 		metrics.PeakBalance,
 		metrics.Available,
-		availablePercent,
+		availablePercent))
+
+	// 收益与风险
+	returnEmoji := "📈"
+	if metrics.ReturnPercent < 0 {
+		returnEmoji = "📉"
+	}
+	sb.WriteString(fmt.Sprintf("**收益**: %s %+.2f%% | 未实现盈亏 $%+.2f\n",
+		returnEmoji,
 		metrics.ReturnPercent,
+		metrics.UnrealisedPnl))
+
+	// 回撤与夏普比率
+	drawdownEmoji := "✅"
+	if metrics.DrawdownFromPeak > 5 {
+		drawdownEmoji = "⚠️"
+	} else if metrics.DrawdownFromPeak > 10 {
+		drawdownEmoji = "🔴"
+	}
+
+	sharpeEmoji := "📊"
+	sharpeText := "N/A"
+	if metrics.SharpeRatio != 0 {
+		sharpeText = fmt.Sprintf("%.2f", metrics.SharpeRatio)
+		if metrics.SharpeRatio > 1.0 {
+			sharpeEmoji = "🌟"
+		} else if metrics.SharpeRatio < 0 {
+			sharpeEmoji = "⚠️"
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("**风险**: %s 回撤 %.2f%%(峰值) / %.2f%%(初始) | %s 夏普比率 %s\n\n",
+		drawdownEmoji,
 		metrics.DrawdownFromPeak,
 		metrics.DrawdownFromInitial,
-		metrics.UnrealisedPnl))
+		sharpeEmoji,
+		sharpeText))
 }
 
 // writePositionInfo 写入持仓信息
@@ -401,14 +526,11 @@ func (s *PromptService) writeTradeHistory(sb *strings.Builder, trades []models.T
 	sb.WriteString("\n")
 }
 
-// writePerformanceMetrics 写入性能指标
+// writePerformanceMetrics 写入性能指标（已废弃，夏普比率已整合到账户状态中）
+// 保留此函数以防需要单独展示其他性能指标
 func (s *PromptService) writePerformanceMetrics(sb *strings.Builder, metrics *AccountMetrics) {
-	if metrics == nil {
-		return
-	}
-
-	sb.WriteString("## 性能指标\n\n")
-	sb.WriteString(fmt.Sprintf("- 夏普比率: %.2f", metrics.SharpeRatio))
+	// 此函数已不再使用，夏普比率已整合到 writeAccountInfo 中
+	return
 }
 
 // getPricePrecision 根据价格范围获取合适的小数精度
