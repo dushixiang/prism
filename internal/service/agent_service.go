@@ -17,6 +17,7 @@ import (
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/shared"
 	"github.com/openai/openai-go/shared/constant"
+	"github.com/spf13/cast"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -849,46 +850,6 @@ func (s *AgentService) setupPositionLeverage(ctx context.Context, symbol string,
 	return nil
 }
 
-func (s *AgentService) stopLossPercentForLeverage(leverage int) float64 {
-	if leverage <= 0 {
-		return -5.0
-	}
-
-	switch {
-	case leverage >= 12:
-		return -3.0
-	case leverage >= 8:
-		return -4.0
-	default:
-		return -5.0
-	}
-}
-
-func (s *AgentService) calculatePositionSize(accountValue float64, riskPercent float64, leverage int, stopLossPercent float64) float64 {
-	if leverage <= 0 {
-		return 0
-	}
-
-	if stopLossPercent == 0 {
-		stopLossPercent = s.stopLossPercentForLeverage(leverage)
-	}
-
-	if stopLossPercent == 0 {
-		return 0
-	}
-
-	if stopLossPercent < 0 {
-		stopLossPercent = -stopLossPercent
-	}
-
-	riskAmount := accountValue * riskPercent / 100
-	if stopLossPercent == 0 {
-		return 0
-	}
-
-	return riskAmount / (stopLossPercent / 100 * float64(leverage))
-}
-
 // validateStopPrices 验证止损止盈价格的合理性
 func (s *AgentService) validateStopPrices(currentPrice float64, side string, stopLossPrice, takeProfitPrice float64) error {
 	if side == "long" {
@@ -1083,18 +1044,55 @@ func (s *AgentService) toolUpdateStopOrders(ctx context.Context, args map[string
 		}
 	}
 
-	// 先取消该symbol的所有挂单（包括旧的止损止盈单）
-	if err := s.exchange.CancelAllOrders(ctx, symbol); err != nil {
-		s.logger.Warn("failed to cancel old orders, continuing anyway",
-			zap.String("symbol", symbol),
-			zap.Error(err))
-	}
-
-	// 取消数据库中该持仓的所有活跃订单记录
-	if err := s.OrderRepo.CancelByPositionID(ctx, targetPosition.ID); err != nil {
-		s.logger.Error("failed to cancel old orders in database",
+	// 获取该持仓的所有活跃订单
+	activeOrders, err := s.OrderRepo.FindByPositionID(ctx, targetPosition.ID)
+	if err != nil {
+		s.logger.Warn("failed to get active orders for position",
 			zap.String("position_id", targetPosition.ID),
 			zap.Error(err))
+		activeOrders = []models.Order{}
+	}
+
+	// 精准取消：只取消需要更新的订单类型
+	for i := range activeOrders {
+		order := &activeOrders[i]
+		if !order.IsActive() {
+			continue
+		}
+
+		shouldCancel := false
+		if hasStopLoss && order.IsStopLoss() {
+			shouldCancel = true
+		}
+		if hasTakeProfit && order.IsTakeProfit() {
+			shouldCancel = true
+		}
+
+		if shouldCancel && order.ExchangeID != "" {
+			// 从交易所取消订单
+			var exchangeOrderID = cast.ToInt64(order.ExchangeID)
+			if exchangeOrderID > 0 {
+				if err := s.exchange.CancelOrder(ctx, symbol, exchangeOrderID); err != nil {
+					s.logger.Warn("failed to cancel order on exchange",
+						zap.String("symbol", symbol),
+						zap.String("order_id", order.ExchangeID),
+						zap.String("order_type", string(order.OrderType)),
+						zap.Error(err))
+				} else {
+					s.logger.Info("cancelled order on exchange",
+						zap.String("symbol", symbol),
+						zap.String("order_id", order.ExchangeID),
+						zap.String("order_type", string(order.OrderType)))
+				}
+			}
+
+			// 更新数据库订单状态为已取消
+			if err := s.OrderRepo.UpdateStatus(ctx, order.ID, models.OrderStatusCanceled); err != nil {
+				s.logger.Error("failed to update order status in database",
+					zap.String("order_id", order.ID),
+					zap.Error(err))
+			}
+		}
 	}
 
 	// 创建新的止损单

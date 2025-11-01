@@ -18,6 +18,17 @@ type OrderRepo struct {
 	orz.Repository[models.Order, string]
 }
 
+// FindByPositionID 查找指定持仓的所有订单（包括非活跃订单）
+func (r OrderRepo) FindByPositionID(ctx context.Context, positionID string) ([]models.Order, error) {
+	db := r.GetDB(ctx)
+	var orders []models.Order
+	err := db.Table(r.GetTableName()).
+		Where("position_id = ?", positionID).
+		Order("created_at DESC").
+		Find(&orders).Error
+	return orders, err
+}
+
 // FindActiveByPositionID 查找指定持仓的所有活跃订单
 func (r OrderRepo) FindActiveByPositionID(ctx context.Context, positionID string) ([]models.Order, error) {
 	db := r.GetDB(ctx)

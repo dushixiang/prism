@@ -575,35 +575,6 @@ func formatPriceArray(arr []float64) string {
 	return "[" + strings.Join(strs, ", ") + "]"
 }
 
-// formatOHLCArray 格式化OHLC数组为紧凑格式
-func formatOHLCArray(opens, highs, lows, closes []float64) string {
-	if len(opens) == 0 || len(opens) != len(highs) || len(opens) != len(lows) || len(opens) != len(closes) {
-		return "[]"
-	}
-
-	// 计算平均价格以确定精度
-	avgPrice := 0.0
-	for i := range closes {
-		avgPrice += closes[i]
-	}
-	avgPrice /= float64(len(closes))
-
-	precision := getPricePrecision(avgPrice)
-	formatStr := fmt.Sprintf("[%%.%df|%%.%df|%%.%df|%%.%df]", precision, precision, precision, precision)
-
-	var sb strings.Builder
-	sb.WriteString("[")
-	for i := range opens {
-		if i > 0 {
-			sb.WriteString(", ")
-		}
-		// 格式: [O|H|L|C] 例如 [100.5|101.2|99.8|100.9]
-		sb.WriteString(fmt.Sprintf(formatStr, opens[i], highs[i], lows[i], closes[i]))
-	}
-	sb.WriteString("]")
-	return sb.String()
-}
-
 // GetSystemInstructions 获取系统指令
 func (s *PromptService) GetSystemInstructions() string {
 	tc := s.config.Trading
