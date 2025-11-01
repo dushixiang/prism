@@ -152,7 +152,7 @@ func (b *BinanceClient) GetAccountInfo(ctx context.Context) (*AccountInfo, error
 		return nil, fmt.Errorf("failed to get account info: %w", err)
 	}
 
-	totalBalance, _ := strconv.ParseFloat(account.TotalWalletBalance, 64)
+	totalBalance, _ := strconv.ParseFloat(account.TotalMarginBalance, 64)
 	availableBalance, _ := strconv.ParseFloat(account.AvailableBalance, 64)
 	unrealizedPnl, _ := strconv.ParseFloat(account.TotalUnrealizedProfit, 64)
 
