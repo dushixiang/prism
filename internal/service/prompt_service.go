@@ -18,16 +18,18 @@ import (
 type PromptService struct {
 	config    *config.Config
 	tradeRepo *repo.TradeRepo
+	orderRepo *repo.OrderRepo
 }
 
 //go:embed templates/system_instructions.txt
 var systemInstructionsTemplate string
 
 // NewPromptService 创建提示词服务
-func NewPromptService(conf *config.Config, tradeRepo *repo.TradeRepo) *PromptService {
+func NewPromptService(conf *config.Config, tradeRepo *repo.TradeRepo, orderRepo *repo.OrderRepo) *PromptService {
 	return &PromptService{
 		config:    conf,
 		tradeRepo: tradeRepo,
+		orderRepo: orderRepo,
 	}
 }
 
@@ -56,7 +58,7 @@ func (s *PromptService) GeneratePrompt(ctx context.Context, data *PromptData) st
 
 	s.writeAccountInfo(&sb, data.AccountMetrics)
 
-	s.writePositionInfo(&sb, data.Positions)
+	s.writePositionInfo(&sb, data.Positions, data.AccountMetrics)
 
 	s.writeActiveOrders(&sb, data.ActiveOrders, data.Positions, data.MarketDataMap)
 
@@ -342,7 +344,7 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 }
 
 // writePositionInfo 写入持仓信息
-func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []models.Position) {
+func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []models.Position, metrics *AccountMetrics) {
 	maxPositions := s.config.Trading.MaxPositions
 	currentCount := len(positions)
 
@@ -354,27 +356,60 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []model
 
 	if len(positions) == 0 {
 		sb.WriteString(fmt.Sprintf("当前无持仓，最多可开 %d 个仓位\n\n", maxPositions))
-		return
+	} else {
+		for i := range positions {
+			pos := &positions[i] // 取地址以便调用方法
+			pnlPercent := pos.CalculatePnlPercent()
+			holding := pos.CalculateHoldingStr()
+
+			sb.WriteString(fmt.Sprintf("### %d. %s %s\n", i+1, pos.Symbol, strings.ToUpper(pos.Side)))
+			sb.WriteString(fmt.Sprintf("入场$%.2f → 当前$%.2f | 盈亏$%+.2f (%+.2f%%) | %dx杠杆 | 持仓时间 %s\n\n",
+				pos.EntryPrice, pos.CurrentPrice, pos.UnrealizedPnl, pnlPercent, pos.Leverage, holding))
+
+			// 开仓理由和退出计划
+			if strings.TrimSpace(pos.EntryReason) != "" {
+				sb.WriteString(fmt.Sprintf("**开仓理由**: %s\n\n", pos.EntryReason))
+			}
+			if strings.TrimSpace(pos.ExitPlan) != "" {
+				sb.WriteString(fmt.Sprintf("**退出计划**: %s\n\n", pos.ExitPlan))
+			}
+
+			sb.WriteString("\n")
+		}
 	}
 
-	for i := range positions {
-		pos := &positions[i] // 取地址以便调用方法
-		pnlPercent := pos.CalculatePnlPercent()
-		holding := pos.CalculateHoldingStr()
+	// 如果还有剩余仓位，计算建议的资金分配
+	remainingSlots := maxPositions - currentCount
+	if remainingSlots > 0 && metrics != nil && metrics.Available > 0 {
+		sb.WriteString("## 资金分配建议\n\n")
 
-		sb.WriteString(fmt.Sprintf("### %d. %s %s\n", i+1, pos.Symbol, strings.ToUpper(pos.Side)))
-		sb.WriteString(fmt.Sprintf("入场$%.2f → 当前$%.2f | 盈亏$%+.2f (%+.2f%%) | %dx杠杆 | 持仓时间 %s\n\n",
-			pos.EntryPrice, pos.CurrentPrice, pos.UnrealizedPnl, pnlPercent, pos.Leverage, holding))
+		// 计算每个新仓位的建议保证金
+		totalDivisor := float64(remainingSlots + currentCount)
+		allocationPerPosition := metrics.Available / totalDivisor
 
-		// 开仓理由和退出计划
-		if strings.TrimSpace(pos.EntryReason) != "" {
-			sb.WriteString(fmt.Sprintf("**开仓理由**: %s\n\n", pos.EntryReason))
-		}
-		if strings.TrimSpace(pos.ExitPlan) != "" {
-			sb.WriteString(fmt.Sprintf("**退出计划**: %s\n\n", pos.ExitPlan))
-		}
+		sb.WriteString(fmt.Sprintf("**剩余可开仓位**: %d个\n", remainingSlots))
+		sb.WriteString(fmt.Sprintf("**可用余额**: $%.2f\n", metrics.Available))
+		sb.WriteString(fmt.Sprintf("**建议分配**: $%.2f / %.0f = $%.2f 每个仓位\n\n",
+			metrics.Available, totalDivisor, allocationPerPosition))
 
-		sb.WriteString("\n")
+		// 根据不同利用率给出建议
+		minLeverage := s.config.Trading.MinLeverage
+		maxLeverage := s.config.Trading.MaxLeverage
+
+		sb.WriteString("**仓位规模参考**（基于信号质量）：\n")
+		sb.WriteString(fmt.Sprintf("- 高质量信号（85-95%%利用率）：保证金 $%.0f-%.0f，杠杆 %d-%dx\n",
+			allocationPerPosition*0.85, allocationPerPosition*0.95, minLeverage, maxLeverage))
+		sb.WriteString(fmt.Sprintf("  → 名义价值约 $%.0f-%.0f\n",
+			allocationPerPosition*0.85*float64(minLeverage),
+			allocationPerPosition*0.95*float64(maxLeverage)))
+
+		sb.WriteString(fmt.Sprintf("- 中等质量信号（70-80%%利用率）：保证金 $%.0f-%.0f，杠杆 %d-%dx\n",
+			allocationPerPosition*0.70, allocationPerPosition*0.80, minLeverage, maxLeverage))
+		sb.WriteString(fmt.Sprintf("  → 名义价值约 $%.0f-%.0f\n",
+			allocationPerPosition*0.70*float64(minLeverage),
+			allocationPerPosition*0.80*float64(maxLeverage)))
+
+		sb.WriteString("- 弱信号：观望，不开仓\n\n")
 	}
 }
 
@@ -590,15 +625,14 @@ func (s *PromptService) GetSystemInstructions() string {
 	}
 
 	replacements := map[string]interface{}{
-		"minutes_elapsed":        "{{minutes_elapsed}}",
-		"current_time":           "{{current_time}}",
-		"iteration_count":        "{{iteration_count}}",
-		"max_drawdown_percent":   formatFloat(tc.MaxDrawdownPercent),
-		"forced_flat_percent":    formatFloat(tc.MaxDrawdownPercent + 5),
-		"max_positions":          fmt.Sprintf("%d", tc.MaxPositions),
-		"risk_percent_per_trade": formatFloat(tc.RiskPercentPerTrade),
-		"min_leverage":           fmt.Sprintf("%d", tc.MinLeverage),
-		"max_leverage":           fmt.Sprintf("%d", tc.MaxLeverage),
+		"minutes_elapsed":      "{{minutes_elapsed}}",
+		"current_time":         "{{current_time}}",
+		"iteration_count":      "{{iteration_count}}",
+		"max_drawdown_percent": formatFloat(tc.MaxDrawdownPercent),
+		"forced_flat_percent":  formatFloat(tc.MaxDrawdownPercent + 5),
+		"max_positions":        fmt.Sprintf("%d", tc.MaxPositions),
+		"min_leverage":         fmt.Sprintf("%d", tc.MinLeverage),
+		"max_leverage":         fmt.Sprintf("%d", tc.MaxLeverage),
 	}
 
 	tmpl := fasttemplate.New(systemInstructionsTemplate, "{{", "}}")

@@ -49,20 +49,34 @@ export const PositionsList = ({positions, isLoading, error}: PositionsListProps)
 
                         <div className="space-y-1 text-xs text-slate-700">
                             <div className="flex justify-between">
-                                <span className="text-slate-500">开仓价:</span>
+                                <span className="text-slate-500">开仓价格:</span>
                                 <span
                                     className="font-mono">${formatNumber(position.entry_price, 4)}</span>
                             </div>
                             <div className="flex justify-between">
-                                <span className="text-slate-500">现价:</span>
+                                <span className="text-slate-500">标记价格:</span>
                                 <span
                                     className="font-mono">${formatNumber(position.current_price, 4)}</span>
                             </div>
+                            {position.liquidation_price && position.liquidation_price > 0 && (
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">强平价格:</span>
+                                    <span
+                                        className="font-mono text-rose-600">${formatNumber(position.liquidation_price, 4)}</span>
+                                </div>
+                            )}
                             <div className="flex justify-between">
                                 <span className="text-slate-500">数量:</span>
                                 <span
                                     className="font-mono">{formatNumber(position.quantity, 4)}</span>
                             </div>
+                            {position.margin && position.margin > 0 && (
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">保证金:</span>
+                                    <span
+                                        className="font-mono">{formatCurrency(position.margin)}</span>
+                                </div>
+                            )}
                             <div className="flex justify-between">
                                 <span className="text-slate-500">持仓时间:</span>
                                 <span

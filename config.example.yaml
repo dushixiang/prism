@@ -37,4 +37,3 @@ app:
     max_positions: 5  # 同时持有的最大仓位数量。
     max_leverage: 15  # 建仓使用的最高杠杆倍数。
     min_leverage: 3  # 建仓使用的最低杠杆倍数。
-    risk_percent_per_trade: 3  # 单笔交易愿意承担的账户风险百分比。
