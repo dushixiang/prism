@@ -362,8 +362,11 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []model
 			pnlPercent := pos.CalculatePnlPercent()
 			holding := pos.CalculateHoldingStr()
 
+			pricePrecision := getPricePrecision(pos.CurrentPrice)
+			priceFormat := fmt.Sprintf("%%.%df", pricePrecision)
+
 			sb.WriteString(fmt.Sprintf("### %d. %s %s\n", i+1, pos.Symbol, strings.ToUpper(pos.Side)))
-			sb.WriteString(fmt.Sprintf("入场$%.2f → 当前$%.2f | 盈亏$%+.2f (%+.2f%%) | %dx杠杆 | 持仓时间 %s\n\n",
+			sb.WriteString(fmt.Sprintf("入场$"+priceFormat+" → 当前$"+priceFormat+" | 盈亏$%+.2f (%+.2f%%) | %dx杠杆 | 持仓时间 %s\n\n",
 				pos.EntryPrice, pos.CurrentPrice, pos.UnrealizedPnl, pnlPercent, pos.Leverage, holding))
 
 			// 开仓理由和退出计划
@@ -545,7 +548,9 @@ func (s *PromptService) writeTradeHistory(sb *strings.Builder, trades []models.T
 	// 交易列表
 	for i := range trades {
 		trade := &trades[i]
-		sb.WriteString(fmt.Sprintf("%d. [%s] %s %s, 价格=$%.2f, 数量=%.4f, 杠杆=%dx, 手续费=$%.2f",
+		pricePrecision := getPricePrecision(trade.Price)
+		priceFormat := fmt.Sprintf("%%.%df", pricePrecision)
+		sb.WriteString(fmt.Sprintf("%d. [%s] %s %s, 价格=$"+priceFormat+", 数量=%.4f, 杠杆=%dx, 手续费=$%.2f",
 			i+1, trade.ExecutedAt.Format("01-02 15:04"), trade.Type, trade.Symbol,
 			trade.Price, trade.Quantity, trade.Leverage, trade.Fee))
 
