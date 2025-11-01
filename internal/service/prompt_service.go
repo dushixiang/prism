@@ -207,16 +207,16 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 					signalStr = " ⚡[" + strings.Join(signals, ",") + "]"
 				}
 
-				// 动态构建格式字符串
-				formatStr := fmt.Sprintf("- %%s: 价格$%s | EMA20/50: $%s/$%s%%s | MACD=%%.%df(信号%%.%df,柱%%.%df) | RSI7/14=%%.1f/%%.1f | ATR3/14=%%.%df/%%.%df | 成交量=%%.0f(均%%.0f)%%s\n",
-					priceFormat, priceFormat, priceFormat, macdPrecision, macdPrecision, macdPrecision, atrPrecision, atrPrecision)
+				// 使用新的多行格式
+				sb.WriteString(fmt.Sprintf("- %s:\n", tf))
+				sb.WriteString(fmt.Sprintf("  - 价格: $"+priceFormat+"%s\n", ind.Price, emaDeviationStr))
+				sb.WriteString(fmt.Sprintf("  - 均线: EMA20=$"+priceFormat+" / EMA50=$"+priceFormat+"\n", ind.EMA20, ind.EMA50))
 
-				sb.WriteString(fmt.Sprintf(formatStr,
-					tf, ind.Price, ind.EMA20, ind.EMA50, emaDeviationStr,
-					ind.MACD, ind.MACDSignal, ind.MACDHist,
-					ind.RSI7, ind.RSI14,
-					ind.ATR3, ind.ATR14,
-					ind.Volume, ind.AvgVolume, signalStr))
+				formatStr := fmt.Sprintf("  - 指标: MACD=%%.%df | RSI14=%%.1f | ATR14=%%.%df\n", macdPrecision, atrPrecision)
+				sb.WriteString(fmt.Sprintf(formatStr, ind.MACD, ind.RSI14, ind.ATR14))
+
+				sb.WriteString(fmt.Sprintf("  - 成交量: %s (均值: %s)%s\n",
+					formatVolume(ind.Volume), formatVolume(ind.AvgVolume), signalStr))
 			}
 		}
 		sb.WriteString("\n")
@@ -265,10 +265,13 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 		// 1小时趋势
 		if data.LongerTermData != nil {
 			sb.WriteString("**1小时趋势**\n")
-			sb.WriteString(fmt.Sprintf("- EMA20 vs EMA50: %s | ATR3 vs ATR14: %s | 成交量 vs 均值: %s\n",
-				data.LongerTermData.EMA20vsEMA50,
-				data.LongerTermData.ATR3vsATR14,
-				data.LongerTermData.VolumeVsAvg))
+
+			// 中文化状态
+			emaStatus := translateStatus(data.LongerTermData.EMA20vsEMA50, "均线", "之上", "之下", "持平")
+			atrStatus := translateStatus(data.LongerTermData.ATR3vsATR14, "短期波动", "加剧", "减弱", "稳定")
+			volStatus := translateStatus(data.LongerTermData.VolumeVsAvg, "成交量", "放大", "萎缩", "相同")
+
+			sb.WriteString(fmt.Sprintf("- 状态: %s | %s | %s\n", emaStatus, atrStatus, volStatus))
 
 			// 1小时序列数据（最近10点）
 			if len(data.LongerTermData.MACDSeries) > 0 || len(data.LongerTermData.RSI14Series) > 0 {
@@ -384,35 +387,11 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []model
 	// 如果还有剩余仓位，计算建议的资金分配
 	remainingSlots := maxPositions - currentCount
 	if remainingSlots > 0 && metrics != nil && metrics.Available > 0 {
-		sb.WriteString("## 资金分配建议\n\n")
-
-		// 计算每个新仓位的建议保证金
-		totalDivisor := float64(remainingSlots + currentCount)
-		allocationPerPosition := metrics.Available / totalDivisor
+		sb.WriteString("## 新开仓建议\n\n")
 
 		sb.WriteString(fmt.Sprintf("**剩余可开仓位**: %d个\n", remainingSlots))
-		sb.WriteString(fmt.Sprintf("**可用余额**: $%.2f\n", metrics.Available))
-		sb.WriteString(fmt.Sprintf("**建议分配**: $%.2f / %.0f = $%.2f 每个仓位\n\n",
-			metrics.Available, totalDivisor, allocationPerPosition))
-
-		// 根据不同利用率给出建议
-		minLeverage := s.config.Trading.MinLeverage
-		maxLeverage := s.config.Trading.MaxLeverage
-
-		sb.WriteString("**仓位规模参考**（基于信号质量）：\n")
-		sb.WriteString(fmt.Sprintf("- 高质量信号（85-95%%利用率）：保证金 $%.0f-%.0f，杠杆 %d-%dx\n",
-			allocationPerPosition*0.85, allocationPerPosition*0.95, minLeverage, maxLeverage))
-		sb.WriteString(fmt.Sprintf("  → 名义价值约 $%.0f-%.0f\n",
-			allocationPerPosition*0.85*float64(minLeverage),
-			allocationPerPosition*0.95*float64(maxLeverage)))
-
-		sb.WriteString(fmt.Sprintf("- 中等质量信号（70-80%%利用率）：保证金 $%.0f-%.0f，杠杆 %d-%dx\n",
-			allocationPerPosition*0.70, allocationPerPosition*0.80, minLeverage, maxLeverage))
-		sb.WriteString(fmt.Sprintf("  → 名义价值约 $%.0f-%.0f\n",
-			allocationPerPosition*0.70*float64(minLeverage),
-			allocationPerPosition*0.80*float64(maxLeverage)))
-
-		sb.WriteString("- 弱信号：观望，不开仓\n\n")
+		sb.WriteString(fmt.Sprintf("**总可用余额**: $%.2f\n\n", metrics.Available))
+		sb.WriteString("**决策要求**：请根据信号质量，自行决定新仓位的保证金大小，以最大化利用可用资金。\n\n")
 	}
 }
 
@@ -577,6 +556,32 @@ func getPricePrecision(avgPrice float64) int {
 		return 4 // 0.01-1: 保留4位 (如某些山寨币: 0.1234)
 	default:
 		return 6 // 小于0.01: 保留6位 (如 SHIB: 0.000012)
+	}
+}
+
+// formatVolume 格式化成交量，使其更具可读性
+func formatVolume(vol float64) string {
+	switch {
+	case vol >= 1_000_000:
+		return fmt.Sprintf("%.1fM", vol/1_000_000)
+	case vol >= 1_000:
+		return fmt.Sprintf("%.1fK", vol/1_000)
+	default:
+		return fmt.Sprintf("%.0f", vol)
+	}
+}
+
+// translateStatus 将英文状态关键字翻译为更具可读性的中文
+func translateStatus(status, prefix, above, below, equal string) string {
+	switch status {
+	case "above":
+		return fmt.Sprintf("%s%s", prefix, above)
+	case "below":
+		return fmt.Sprintf("%s%s", prefix, below)
+	case "equal":
+		return fmt.Sprintf("%s%s", prefix, equal)
+	default:
+		return fmt.Sprintf("%s未知", prefix)
 	}
 }
 
