@@ -37,9 +37,9 @@ type PromptData struct {
 	Iteration      int
 	AccountMetrics *AccountMetrics
 	MarketDataMap  map[string]*MarketData
-	Positions      []*models.Position
-	RecentTrades   []*models.Trade
-	SharpeRatio    *float64 // 可选：夏普比率（用于性能反馈）
+	Positions      []models.Position // 持仓列表（值切片）
+	RecentTrades   []models.Trade    // 最近交易（值切片）
+	ActiveOrders   []models.Order    // 活跃的限价订单（值切片）
 }
 
 // GeneratePrompt 生成完整的AI提示词
@@ -58,9 +58,11 @@ func (s *PromptService) GeneratePrompt(ctx context.Context, data *PromptData) st
 
 	s.writePositionInfo(&sb, data.Positions)
 
+	s.writeActiveOrders(&sb, data.ActiveOrders, data.Positions, data.MarketDataMap)
+
 	s.writeTradeHistory(&sb, data.RecentTrades)
 
-	s.writePerformanceMetrics(&sb, data.SharpeRatio)
+	s.writePerformanceMetrics(&sb, data.AccountMetrics)
 
 	return sb.String()
 }
@@ -215,7 +217,7 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 }
 
 // writePositionInfo 写入持仓信息
-func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*models.Position) {
+func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []models.Position) {
 	maxPositions := s.config.Trading.MaxPositions
 	currentCount := len(positions)
 
@@ -230,7 +232,8 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 		return
 	}
 
-	for i, pos := range positions {
+	for i := range positions {
+		pos := &positions[i] // 取地址以便调用方法
 		pnlPercent := pos.CalculatePnlPercent()
 		holding := pos.CalculateHoldingStr()
 
@@ -250,8 +253,106 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []*mode
 	}
 }
 
+// writeActiveOrders 写入活跃的限价订单信息
+func (s *PromptService) writeActiveOrders(sb *strings.Builder, orders []models.Order, positions []models.Position, marketDataMap map[string]*MarketData) {
+	sb.WriteString("## 活跃限价单\n\n")
+
+	if len(orders) == 0 {
+		sb.WriteString("当前无活跃限价单\n\n")
+		return
+	}
+
+	// 按持仓分组订单
+	ordersByPosition := make(map[string][]models.Order)
+	for i := range orders {
+		if orders[i].IsActive() {
+			ordersByPosition[orders[i].PositionID] = append(ordersByPosition[orders[i].PositionID], orders[i])
+		}
+	}
+
+	if len(ordersByPosition) == 0 {
+		sb.WriteString("当前无活跃限价单\n\n")
+		return
+	}
+
+	// 创建持仓ID到持仓的映射
+	positionMap := make(map[string]*models.Position)
+	for i := range positions {
+		positionMap[positions[i].ID] = &positions[i]
+	}
+
+	// 按持仓展示订单
+	posIdx := 1
+	for posID, posOrders := range ordersByPosition {
+		pos := positionMap[posID]
+		if pos == nil {
+			continue
+		}
+
+		// 获取当前价格
+		currentPrice := pos.CurrentPrice
+		if marketData, ok := marketDataMap[pos.Symbol]; ok && marketData != nil {
+			currentPrice = marketData.CurrentPrice
+		}
+
+		sb.WriteString(fmt.Sprintf("### 持仓#%d %s %s\n", posIdx, pos.Symbol, strings.ToUpper(pos.Side)))
+
+		// 分类订单
+		var stopLossOrders []models.Order
+		var takeProfitOrders []models.Order
+		for i := range posOrders {
+			if posOrders[i].IsStopLoss() {
+				stopLossOrders = append(stopLossOrders, posOrders[i])
+			} else if posOrders[i].IsTakeProfit() {
+				takeProfitOrders = append(takeProfitOrders, posOrders[i])
+			}
+		}
+
+		// 显示止损单
+		if len(stopLossOrders) > 0 {
+			for i := range stopLossOrders {
+				order := &stopLossOrders[i]
+				distance := order.CalculateDistancePercent(currentPrice)
+				createdTime := order.CreatedAt.Format("01-02 15:04")
+				pricePrecision := getPricePrecision(order.TriggerPrice)
+				priceFormat := fmt.Sprintf("%%.%df", pricePrecision)
+
+				sb.WriteString(fmt.Sprintf("- **止损**: $"+priceFormat+" (距当前价格 %+.2f%%) | 创建于 %s",
+					order.TriggerPrice, distance, createdTime))
+
+				if order.Reason != "" {
+					sb.WriteString(fmt.Sprintf(" | 原因: %s", order.Reason))
+				}
+				sb.WriteString("\n")
+			}
+		}
+
+		// 显示止盈单
+		if len(takeProfitOrders) > 0 {
+			for i := range takeProfitOrders {
+				order := &takeProfitOrders[i]
+				distance := order.CalculateDistancePercent(currentPrice)
+				createdTime := order.CreatedAt.Format("01-02 15:04")
+				pricePrecision := getPricePrecision(order.TriggerPrice)
+				priceFormat := fmt.Sprintf("%%.%df", pricePrecision)
+
+				sb.WriteString(fmt.Sprintf("- **止盈**: $"+priceFormat+" (距当前价格 %+.2f%%) | 创建于 %s",
+					order.TriggerPrice, distance, createdTime))
+
+				if order.Reason != "" {
+					sb.WriteString(fmt.Sprintf(" | 原因: %s", order.Reason))
+				}
+				sb.WriteString("\n")
+			}
+		}
+
+		sb.WriteString("\n")
+		posIdx++
+	}
+}
+
 // writeTradeHistory 写入交易历史
-func (s *PromptService) writeTradeHistory(sb *strings.Builder, trades []*models.Trade) {
+func (s *PromptService) writeTradeHistory(sb *strings.Builder, trades []models.Trade) {
 	sb.WriteString("## 历史交易记录（最近10笔）\n\n")
 
 	if len(trades) == 0 {
@@ -262,16 +363,16 @@ func (s *PromptService) writeTradeHistory(sb *strings.Builder, trades []*models.
 	// 统计信息
 	var totalPnl, totalFees float64
 	var wins, losses int
-	for _, trade := range trades {
-		if trade.Type == "close" {
-			totalPnl += trade.Pnl
-			if trade.Pnl > 0 {
+	for i := range trades {
+		if trades[i].Type == "close" {
+			totalPnl += trades[i].Pnl
+			if trades[i].Pnl > 0 {
 				wins++
-			} else if trade.Pnl < 0 {
+			} else if trades[i].Pnl < 0 {
 				losses++
 			}
 		}
-		totalFees += trade.Fee
+		totalFees += trades[i].Fee
 	}
 
 	closedTrades := wins + losses
@@ -282,7 +383,8 @@ func (s *PromptService) writeTradeHistory(sb *strings.Builder, trades []*models.
 	}
 
 	// 交易列表
-	for i, trade := range trades {
+	for i := range trades {
+		trade := &trades[i]
 		sb.WriteString(fmt.Sprintf("%d. [%s] %s %s, 价格=$%.2f, 数量=%.4f, 杠杆=%dx, 手续费=$%.2f",
 			i+1, trade.ExecutedAt.Format("01-02 15:04"), trade.Type, trade.Symbol,
 			trade.Price, trade.Quantity, trade.Leverage, trade.Fee))
@@ -300,13 +402,13 @@ func (s *PromptService) writeTradeHistory(sb *strings.Builder, trades []*models.
 }
 
 // writePerformanceMetrics 写入性能指标
-func (s *PromptService) writePerformanceMetrics(sb *strings.Builder, sharpeRatio *float64) {
-	if sharpeRatio == nil {
+func (s *PromptService) writePerformanceMetrics(sb *strings.Builder, metrics *AccountMetrics) {
+	if metrics == nil {
 		return
 	}
 
 	sb.WriteString("## 性能指标\n\n")
-	sb.WriteString(fmt.Sprintf("- 夏普比率: %.2f\n\n", *sharpeRatio))
+	sb.WriteString(fmt.Sprintf("- 夏普比率: %.2f", metrics.SharpeRatio))
 }
 
 // getPricePrecision 根据价格范围获取合适的小数精度

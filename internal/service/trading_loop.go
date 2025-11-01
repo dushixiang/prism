@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dushixiang/prism/internal/config"
+	"github.com/dushixiang/prism/internal/repo"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
@@ -18,6 +19,7 @@ type TradingLoop struct {
 	positionService *PositionService
 	promptService   *PromptService
 	agentService    *AgentService
+	orderRepo       *repo.OrderRepo
 	logger          *zap.Logger
 
 	startTime time.Time
@@ -37,6 +39,7 @@ func NewTradingLoop(
 	positionService *PositionService,
 	promptService *PromptService,
 	agentService *AgentService,
+	orderRepo *repo.OrderRepo,
 	logger *zap.Logger,
 ) *TradingLoop {
 	return &TradingLoop{
@@ -46,6 +49,7 @@ func NewTradingLoop(
 		positionService: positionService,
 		promptService:   promptService,
 		agentService:    agentService,
+		orderRepo:       orderRepo,
 		logger:          logger,
 		startTime:       time.Now(),
 		iteration:       0,
@@ -180,10 +184,11 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 	// 获取历史交易
 	recentTrades, _ := t.agentService.GetRecentTrades(ctx, 10)
 
-	// 准备夏普比率（如果有效则传入）
-	var sharpeRatio *float64
-	if accountMetrics.SharpeRatio != 0.0 {
-		sharpeRatio = &accountMetrics.SharpeRatio
+	// 获取所有活跃订单
+	activeOrders, err := t.orderRepo.FindAllActive(ctx)
+	if err != nil {
+		t.logger.Warn("failed to fetch active orders for prompt", zap.Error(err))
+		activeOrders = nil
 	}
 
 	promptData := &PromptData{
@@ -193,7 +198,7 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 		MarketDataMap:  marketData,
 		Positions:      positions,
 		RecentTrades:   recentTrades,
-		SharpeRatio:    sharpeRatio,
+		ActiveOrders:   activeOrders,
 	}
 
 	prompt := t.promptService.GeneratePrompt(ctx, promptData)

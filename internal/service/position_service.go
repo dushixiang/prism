@@ -142,18 +142,13 @@ func (s *PositionService) SyncPositions(ctx context.Context) error {
 }
 
 // GetAllPositions 获取所有持仓
-func (s *PositionService) GetAllPositions(ctx context.Context) ([]*models.Position, error) {
+func (s *PositionService) GetAllPositions(ctx context.Context) ([]models.Position, error) {
 	positions, err := s.PositionRepo.FindAll(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]*models.Position, len(positions))
-	for i := range positions {
-		result[i] = &positions[i]
-	}
-
-	return result, nil
+	return positions, nil
 }
 
 // GetPosition 获取单个持仓

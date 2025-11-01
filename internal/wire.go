@@ -40,6 +40,7 @@ var (
 		provideExchange,
 		provideOpenAIClient,
 		repo.NewTradeRepo,
+		repo.NewOrderRepo,
 		service.NewIndicatorService,
 		service.NewMarketService,
 		service.NewTradingAccountService,

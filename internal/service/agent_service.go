@@ -29,6 +29,7 @@ type AgentService struct {
 	*repo.TradeRepo
 	*repo.DecisionRepo
 	*repo.LLMLogRepo
+	*repo.OrderRepo
 
 	openAIClient    *openai.Client
 	exchange        exchange.Exchange
@@ -52,6 +53,7 @@ func NewAgentService(
 		TradeRepo:       repo.NewTradeRepo(db),
 		DecisionRepo:    repo.NewDecisionRepo(db),
 		LLMLogRepo:      repo.NewLLMLogRepo(db),
+		OrderRepo:       repo.NewOrderRepo(db),
 		openAIClient:    openAIClient,
 		exchange:        exchange,
 		positionService: positionService,
@@ -694,9 +696,9 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 	}
 
 	var targetPosition *models.Position
-	for _, pos := range positions {
-		if pos.Symbol == symbol {
-			targetPosition = pos
+	for i := range positions {
+		if positions[i].Symbol == symbol {
+			targetPosition = &positions[i]
 			break
 		}
 	}
@@ -911,26 +913,110 @@ func (s *AgentService) validateStopPrices(currentPrice float64, side string, sto
 
 // createStopLossOrder 创建止损单
 func (s *AgentService) createStopLossOrder(ctx context.Context, symbol, side string, quantity, stopPrice float64) error {
+	return s.createStopLossOrderWithReason(ctx, symbol, side, quantity, stopPrice, "开仓时设置止损")
+}
+
+// createStopLossOrderWithReason 创建止损单（带原因说明）
+func (s *AgentService) createStopLossOrderWithReason(ctx context.Context, symbol, side string, quantity, stopPrice float64, reason string) error {
 	// 做多止损 = 卖出；做空止损 = 买入
 	stopSide := exchange.OrderSideSell
 	if side == "short" {
 		stopSide = exchange.OrderSideBuy
 	}
 
-	_, err := s.exchange.CreateStopLossOrder(ctx, symbol, stopSide, quantity, stopPrice)
-	return err
+	// 在交易所创建订单
+	orderResult, err := s.exchange.CreateStopLossOrder(ctx, symbol, stopSide, quantity, stopPrice)
+	if err != nil {
+		return err
+	}
+
+	// 获取持仓ID
+	position, err := s.positionService.PositionRepo.FindActiveBySymbolAndSide(ctx, symbol, side)
+	if err != nil {
+		s.logger.Warn("failed to get position for order recording",
+			zap.String("symbol", symbol),
+			zap.String("side", side),
+			zap.Error(err))
+		// 不阻止订单创建，只是无法记录到数据库
+		return nil
+	}
+
+	// 记录到数据库
+	order := &models.Order{
+		ID:           ulid.Make().String(),
+		Symbol:       symbol,
+		PositionID:   position.ID,
+		PositionSide: side,
+		OrderType:    models.OrderTypeStopLoss,
+		TriggerPrice: stopPrice,
+		Quantity:     quantity,
+		ExchangeID:   fmt.Sprintf("%d", orderResult.OrderID),
+		Status:       models.OrderStatusActive,
+		Reason:       reason,
+	}
+
+	if err := s.OrderRepo.Create(ctx, order); err != nil {
+		s.logger.Error("failed to save stop loss order to database",
+			zap.String("symbol", symbol),
+			zap.Error(err))
+		// 不阻止订单创建
+	}
+
+	return nil
 }
 
 // createTakeProfitOrder 创建止盈单
 func (s *AgentService) createTakeProfitOrder(ctx context.Context, symbol, side string, quantity, takeProfitPrice float64) error {
+	return s.createTakeProfitOrderWithReason(ctx, symbol, side, quantity, takeProfitPrice, "开仓时设置止盈")
+}
+
+// createTakeProfitOrderWithReason 创建止盈单（带原因说明）
+func (s *AgentService) createTakeProfitOrderWithReason(ctx context.Context, symbol, side string, quantity, takeProfitPrice float64, reason string) error {
 	// 做多止盈 = 卖出；做空止盈 = 买入
 	takeProfitSide := exchange.OrderSideSell
 	if side == "short" {
 		takeProfitSide = exchange.OrderSideBuy
 	}
 
-	_, err := s.exchange.CreateTakeProfitOrder(ctx, symbol, takeProfitSide, quantity, takeProfitPrice)
-	return err
+	// 在交易所创建订单
+	orderResult, err := s.exchange.CreateTakeProfitOrder(ctx, symbol, takeProfitSide, quantity, takeProfitPrice)
+	if err != nil {
+		return err
+	}
+
+	// 获取持仓ID
+	position, err := s.positionService.PositionRepo.FindActiveBySymbolAndSide(ctx, symbol, side)
+	if err != nil {
+		s.logger.Warn("failed to get position for order recording",
+			zap.String("symbol", symbol),
+			zap.String("side", side),
+			zap.Error(err))
+		// 不阻止订单创建，只是无法记录到数据库
+		return nil
+	}
+
+	// 记录到数据库
+	order := &models.Order{
+		ID:           ulid.Make().String(),
+		Symbol:       symbol,
+		PositionID:   position.ID,
+		PositionSide: side,
+		OrderType:    models.OrderTypeTakeProfit,
+		TriggerPrice: takeProfitPrice,
+		Quantity:     quantity,
+		ExchangeID:   fmt.Sprintf("%d", orderResult.OrderID),
+		Status:       models.OrderStatusActive,
+		Reason:       reason,
+	}
+
+	if err := s.OrderRepo.Create(ctx, order); err != nil {
+		s.logger.Error("failed to save take profit order to database",
+			zap.String("symbol", symbol),
+			zap.Error(err))
+		// 不阻止订单创建
+	}
+
+	return nil
 }
 
 // toolUpdateStopOrders 更新止损止盈单
@@ -965,9 +1051,9 @@ func (s *AgentService) toolUpdateStopOrders(ctx context.Context, args map[string
 	}
 
 	var targetPosition *models.Position
-	for _, pos := range positions {
-		if pos.Symbol == symbol {
-			targetPosition = pos
+	for i := range positions {
+		if positions[i].Symbol == symbol {
+			targetPosition = &positions[i]
 			break
 		}
 	}
@@ -1004,9 +1090,16 @@ func (s *AgentService) toolUpdateStopOrders(ctx context.Context, args map[string
 			zap.Error(err))
 	}
 
+	// 取消数据库中该持仓的所有活跃订单记录
+	if err := s.OrderRepo.CancelByPositionID(ctx, targetPosition.ID); err != nil {
+		s.logger.Error("failed to cancel old orders in database",
+			zap.String("position_id", targetPosition.ID),
+			zap.Error(err))
+	}
+
 	// 创建新的止损单
 	if hasStopLoss && newStopLossPrice > 0 {
-		if err := s.createStopLossOrder(ctx, symbol, targetPosition.Side, targetPosition.Quantity, newStopLossPrice); err != nil {
+		if err := s.createStopLossOrderWithReason(ctx, symbol, targetPosition.Side, targetPosition.Quantity, newStopLossPrice, reason); err != nil {
 			s.logger.Error("failed to create new stop loss order",
 				zap.String("symbol", symbol),
 				zap.Float64("new_stop_loss_price", newStopLossPrice),
@@ -1028,7 +1121,7 @@ func (s *AgentService) toolUpdateStopOrders(ctx context.Context, args map[string
 
 	// 创建新的止盈单（0表示取消）
 	if hasTakeProfit && newTakeProfitPrice > 0 {
-		if err := s.createTakeProfitOrder(ctx, symbol, targetPosition.Side, targetPosition.Quantity, newTakeProfitPrice); err != nil {
+		if err := s.createTakeProfitOrderWithReason(ctx, symbol, targetPosition.Side, targetPosition.Quantity, newTakeProfitPrice, reason); err != nil {
 			s.logger.Error("failed to create new take profit order",
 				zap.String("symbol", symbol),
 				zap.Float64("new_take_profit_price", newTakeProfitPrice),
@@ -1140,18 +1233,13 @@ func (s *AgentService) GetRecentDecisions(ctx context.Context, limit int) ([]*mo
 }
 
 // GetRecentTrades 获取最近的交易记录
-func (s *AgentService) GetRecentTrades(ctx context.Context, limit int) ([]*models.Trade, error) {
+func (s *AgentService) GetRecentTrades(ctx context.Context, limit int) ([]models.Trade, error) {
 	trades, err := s.TradeRepo.FindRecentTrades(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]*models.Trade, len(trades))
-	for i := range trades {
-		result[i] = &trades[i]
-	}
-
-	return result, nil
+	return trades, nil
 }
 
 // GetRecentLLMLogs 获取最近的LLM日志
