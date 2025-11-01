@@ -415,6 +415,35 @@ func (s *AgentService) buildOpenAITools(accountMetrics *AccountMetrics) []openai
 				},
 			},
 		},
+		{
+			Type: functionType,
+			Function: shared.FunctionDefinitionParam{
+				Name:        "updateStopOrders",
+				Description: openai.String("更新持仓的止损止盈单。用于移动止损保护利润、调整止盈目标等。会取消旧的止损止盈单并创建新的。"),
+				Parameters: shared.FunctionParameters{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"symbol": map[string]interface{}{
+							"type":        "string",
+							"description": "交易对",
+						},
+						"new_stop_loss_price": map[string]interface{}{
+							"type":        "number",
+							"description": "【可选】新的止损价格。如果不提供则保持原止损不变。常见场景：持仓盈利后移动止损到盈亏平衡点或更高位置保护利润。",
+						},
+						"new_take_profit_price": map[string]interface{}{
+							"type":        "number",
+							"description": "【可选】新的止盈价格。如果不提供则保持原止盈不变（或取消止盈单让AI灵活管理）。设为0表示取消止盈单。",
+						},
+						"reason": map[string]interface{}{
+							"type":        "string",
+							"description": "更新理由。说明为什么要调整止损止盈（如：持仓盈利5%，移动止损至盈亏平衡点；市场环境变化，调高止盈目标等）。",
+						},
+					},
+					"required": []string{"symbol", "reason"},
+				},
+			},
+		},
 	}
 }
 
@@ -425,6 +454,8 @@ func (s *AgentService) executeToolFunction(ctx context.Context, functionName str
 		return s.toolOpenPosition(ctx, args)
 	case "closePosition":
 		return s.toolClosePosition(ctx, args)
+	case "updateStopOrders":
+		return s.toolUpdateStopOrders(ctx, args)
 	default:
 		return nil, fmt.Errorf("unknown function: %s", functionName)
 	}
@@ -900,6 +931,155 @@ func (s *AgentService) createTakeProfitOrder(ctx context.Context, symbol, side s
 
 	_, err := s.exchange.CreateTakeProfitOrder(ctx, symbol, takeProfitSide, quantity, takeProfitPrice)
 	return err
+}
+
+// toolUpdateStopOrders 更新止损止盈单
+func (s *AgentService) toolUpdateStopOrders(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	symbol, _ := args["symbol"].(string)
+	symbol = strings.TrimSpace(symbol)
+	reason, _ := args["reason"].(string)
+	reason = strings.TrimSpace(reason)
+	newStopLossPrice, hasStopLoss := args["new_stop_loss_price"].(float64)
+	newTakeProfitPrice, hasTakeProfit := args["new_take_profit_price"].(float64)
+
+	s.logger.Info("attempting to update stop orders",
+		zap.String("symbol", symbol),
+		zap.Float64("new_stop_loss", newStopLossPrice),
+		zap.Float64("new_take_profit", newTakeProfitPrice),
+		zap.String("reason", reason))
+
+	if symbol == "" {
+		return nil, fmt.Errorf("symbol is required")
+	}
+	if reason == "" {
+		return nil, fmt.Errorf("reason is required")
+	}
+	if !hasStopLoss && !hasTakeProfit {
+		return nil, fmt.Errorf("must provide at least one of new_stop_loss_price or new_take_profit_price")
+	}
+
+	// 获取当前持仓
+	positions, err := s.positionService.GetAllPositions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get positions: %w", err)
+	}
+
+	var targetPosition *models.Position
+	for _, pos := range positions {
+		if pos.Symbol == symbol {
+			targetPosition = pos
+			break
+		}
+	}
+
+	if targetPosition == nil {
+		return nil, fmt.Errorf("no position found for symbol %s", symbol)
+	}
+
+	// 获取当前价格
+	currentPrice, err := s.exchange.GetCurrentPrice(ctx, symbol)
+	if err != nil {
+		s.logger.Warn("failed to get current price", zap.Error(err))
+		currentPrice = targetPosition.CurrentPrice
+	}
+
+	// 如果提供了新止损价格，验证合理性
+	if hasStopLoss && newStopLossPrice > 0 {
+		if err := s.validateStopPrices(currentPrice, targetPosition.Side, newStopLossPrice, 0); err != nil {
+			return nil, fmt.Errorf("invalid new stop loss price: %w", err)
+		}
+	}
+
+	// 如果提供了新止盈价格且不为0，验证合理性
+	if hasTakeProfit && newTakeProfitPrice > 0 {
+		if err := s.validateStopPrices(currentPrice, targetPosition.Side, 0, newTakeProfitPrice); err != nil {
+			return nil, fmt.Errorf("invalid new take profit price: %w", err)
+		}
+	}
+
+	// 先取消该symbol的所有挂单（包括旧的止损止盈单）
+	if err := s.exchange.CancelAllOrders(ctx, symbol); err != nil {
+		s.logger.Warn("failed to cancel old orders, continuing anyway",
+			zap.String("symbol", symbol),
+			zap.Error(err))
+	}
+
+	// 创建新的止损单
+	if hasStopLoss && newStopLossPrice > 0 {
+		if err := s.createStopLossOrder(ctx, symbol, targetPosition.Side, targetPosition.Quantity, newStopLossPrice); err != nil {
+			s.logger.Error("failed to create new stop loss order",
+				zap.String("symbol", symbol),
+				zap.Float64("new_stop_loss_price", newStopLossPrice),
+				zap.Error(err))
+			// 不阻止继续执行，记录错误
+		} else {
+			s.logger.Info("new stop loss order created",
+				zap.String("symbol", symbol),
+				zap.Float64("old_stop_loss", targetPosition.StopLoss),
+				zap.Float64("new_stop_loss", newStopLossPrice))
+		}
+	} else if hasStopLoss {
+		// 如果显式传入0，表示不更新止损
+		newStopLossPrice = targetPosition.StopLoss
+	} else {
+		// 如果没有传入，保持原止损
+		newStopLossPrice = targetPosition.StopLoss
+	}
+
+	// 创建新的止盈单（0表示取消）
+	if hasTakeProfit && newTakeProfitPrice > 0 {
+		if err := s.createTakeProfitOrder(ctx, symbol, targetPosition.Side, targetPosition.Quantity, newTakeProfitPrice); err != nil {
+			s.logger.Error("failed to create new take profit order",
+				zap.String("symbol", symbol),
+				zap.Float64("new_take_profit_price", newTakeProfitPrice),
+				zap.Error(err))
+		} else {
+			s.logger.Info("new take profit order created",
+				zap.String("symbol", symbol),
+				zap.Float64("old_take_profit", targetPosition.TakeProfit),
+				zap.Float64("new_take_profit", newTakeProfitPrice))
+		}
+	} else if hasTakeProfit && newTakeProfitPrice == 0 {
+		// 设为0表示取消止盈单（已在CancelAllOrders中取消）
+		s.logger.Info("take profit order cancelled",
+			zap.String("symbol", symbol),
+			zap.Float64("old_take_profit", targetPosition.TakeProfit))
+		newTakeProfitPrice = 0
+	} else {
+		// 如果没有传入，保持原止盈
+		newTakeProfitPrice = targetPosition.TakeProfit
+	}
+
+	// 更新数据库中的止损止盈价格
+	if err := s.positionService.UpdateStopPrices(ctx, symbol, targetPosition.Side, newStopLossPrice, newTakeProfitPrice); err != nil {
+		s.logger.Error("failed to update stop prices in database",
+			zap.String("symbol", symbol),
+			zap.Error(err))
+	}
+
+	message := fmt.Sprintf("成功更新 %s 的止损止盈单", symbol)
+	if hasStopLoss && newStopLossPrice > 0 {
+		message += fmt.Sprintf("，止损: %.2f → %.2f", targetPosition.StopLoss, newStopLossPrice)
+	}
+	if hasTakeProfit {
+		if newTakeProfitPrice > 0 {
+			message += fmt.Sprintf("，止盈: %.2f → %.2f", targetPosition.TakeProfit, newTakeProfitPrice)
+		} else {
+			message += "，已取消止盈单"
+		}
+	}
+	message += fmt.Sprintf("（理由：%s）", reason)
+
+	return map[string]interface{}{
+		"success":         true,
+		"symbol":          symbol,
+		"old_stop_loss":   targetPosition.StopLoss,
+		"new_stop_loss":   newStopLossPrice,
+		"old_take_profit": targetPosition.TakeProfit,
+		"new_take_profit": newTakeProfitPrice,
+		"reason":          reason,
+		"message":         message,
+	}, nil
 }
 
 // SaveDecision 保存AI决策记录，返回决策ID
