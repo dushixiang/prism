@@ -31,10 +31,9 @@ app:
     enabled: false  # 是否启用真实交易。false时使用纸钱包模式（模拟交易，不实际下单）。
     paper_wallet:
       initial_balance: 1000.0  # 纸钱包模式的初始余额（USDT）
-    symbols: [ "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT" ]  # 策略关注的交易对列表。
+    symbols: [ "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT" ]  # 策略关注的交易对列表。
     interval_minutes: 10  # 策略重新评估与下单的最小时间间隔（分钟）。
     max_drawdown_percent: 15  # 账户回撤的参考上限（模型需自行遵守）。
-    max_holding_hours: 0  # 单笔持仓时长限制（设为0表示不限制，由模型根据市场情况决定）。
     max_positions: 5  # 同时持有的最大仓位数量。
     max_leverage: 15  # 建仓使用的最高杠杆倍数。
     min_leverage: 3  # 建仓使用的最低杠杆倍数。

@@ -7,7 +7,6 @@
 - `{{iteration_count}}`：当前是第几次调用模型，可帮助追踪历史对话与迭代次数。
 - `{{max_drawdown_percent}}`：最大允许回撤百分比，来自配置项 `trading.max_drawdown_percent`。
 - `{{forced_flat_percent}}`：强制平仓回撤阈值，等于 `max_drawdown_percent + 5`，用于触发全面风控。
-- `{{max_holding_hours}}`：允许的最长持仓时间（小时），来自配置项 `trading.max_holding_hours`。
 - `{{max_positions}}`：允许的最大持仓数量，来自配置项 `trading.max_positions`。
 - `{{risk_percent_per_trade}}`：单笔交易允许承担的账户风险百分比，来自配置项 `trading.risk_percent_per_trade`。
 - `{{low_leverage_range}}` / `{{mid_leverage_range}}` / `{{high_leverage_range}}`：根据配置的最小与最大杠杆划分的三个建议区间，用于指导模型选择杠杆强度。
