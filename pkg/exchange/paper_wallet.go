@@ -361,3 +361,78 @@ func (p *PaperWallet) Reset() {
 	p.logger.Info("paper wallet reset to initial state",
 		zap.Float64("initial_balance", p.initialBalance))
 }
+
+// CreateStopLossOrder 创建止损单（模拟）
+func (p *PaperWallet) CreateStopLossOrder(ctx context.Context, symbol string, side OrderSide, quantity float64, stopPrice float64) (*OrderResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.orderID++
+	orderID := p.orderID
+
+	p.logger.Info("paper wallet: stop loss order created (simulated)",
+		zap.String("symbol", symbol),
+		zap.String("side", string(side)),
+		zap.Float64("quantity", quantity),
+		zap.Float64("stop_price", stopPrice),
+		zap.Int64("order_id", orderID))
+
+	// 纸钱包模式：止损单不会真实执行
+	// 实际的止损逻辑由AI在每15分钟的循环中检查并手动平仓
+	// 这里只是记录止损单已创建
+
+	return &OrderResult{
+		OrderID:     orderID,
+		Symbol:      symbol,
+		Side:        string(side),
+		Type:        "STOP_MARKET",
+		Quantity:    quantity,
+		Price:       stopPrice,
+		AvgPrice:    0,
+		Status:      "NEW",
+		ExecutedQty: 0,
+	}, nil
+}
+
+// CreateTakeProfitOrder 创建止盈单（模拟）
+func (p *PaperWallet) CreateTakeProfitOrder(ctx context.Context, symbol string, side OrderSide, quantity float64, takeProfitPrice float64) (*OrderResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.orderID++
+	orderID := p.orderID
+
+	p.logger.Info("paper wallet: take profit order created (simulated)",
+		zap.String("symbol", symbol),
+		zap.String("side", string(side)),
+		zap.Float64("quantity", quantity),
+		zap.Float64("take_profit_price", takeProfitPrice),
+		zap.Int64("order_id", orderID))
+
+	// 纸钱包模式：止盈单不会真实执行
+	// 实际的止盈逻辑由AI在每15分钟的循环中检查并手动平仓
+
+	return &OrderResult{
+		OrderID:     orderID,
+		Symbol:      symbol,
+		Side:        string(side),
+		Type:        "TAKE_PROFIT_MARKET",
+		Quantity:    quantity,
+		Price:       takeProfitPrice,
+		AvgPrice:    0,
+		Status:      "NEW",
+		ExecutedQty: 0,
+	}, nil
+}
+
+// CancelAllOrders 取消所有挂单（模拟）
+func (p *PaperWallet) CancelAllOrders(ctx context.Context, symbol string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.logger.Info("paper wallet: all orders cancelled (simulated)",
+		zap.String("symbol", symbol))
+
+	// 纸钱包模式：没有实际的挂单需要取消
+	return nil
+}

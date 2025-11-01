@@ -352,7 +352,7 @@ func (s *AgentService) buildOpenAITools(accountMetrics *AccountMetrics) []openai
 			Type: functionType,
 			Function: shared.FunctionDefinitionParam{
 				Name:        "openPosition",
-				Description: openai.String("开仓交易（做多或做空）。开仓前必须先设置杠杆。"),
+				Description: openai.String("开仓交易（做多或做空）。开仓后将自动在交易所创建止损单作为最后防线。"),
 				Parameters: shared.FunctionParameters{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -367,11 +367,19 @@ func (s *AgentService) buildOpenAITools(accountMetrics *AccountMetrics) []openai
 						},
 						"leverage": map[string]interface{}{
 							"type":        "integer",
-							"description": "杠杆倍数（5-15），必须根据信号强度选择",
+							"description": "杠杆倍数（3-15），必须根据信号强度选择",
 						},
 						"quantity": map[string]interface{}{
 							"type":        "number",
 							"description": "保证金金额（USDT）。注意：实际开仓的名义价值 = 保证金 × 杠杆。例如用100 USDT保证金，10倍杠杆，实际开仓价值1000 USDT",
+						},
+						"stop_loss_price": map[string]interface{}{
+							"type":        "number",
+							"description": "【必填】止损价格。开仓后会立即在交易所创建止损单。做多时必须低于当前价，做空时必须高于当前价。建议：根据ATR、关键支撑阻力位或风险承受度设置，通常为入场价的3-5%（考虑杠杆后的账户风险）。",
+						},
+						"take_profit_price": map[string]interface{}{
+							"type":        "number",
+							"description": "【可选】止盈价格。如果设置，开仓后会在交易所创建止盈单。做多时必须高于当前价，做空时必须低于当前价。建议：基于关键阻力位或风险回报比设置（如2:1或3:1）。不设置则由AI动态管理。",
 						},
 						"reason": map[string]interface{}{
 							"type":        "string",
@@ -382,7 +390,7 @@ func (s *AgentService) buildOpenAITools(accountMetrics *AccountMetrics) []openai
 							"description": "详细的退出计划，必须明确包含以下至少一种条件：1)止损条件（价格/百分比/指标）；2)止盈条件（目标价/阻力位）；3)结构破坏条件；4)时间条件。平仓时的 reason 必须明确对应这些条件之一。",
 						},
 					},
-					"required": []string{"symbol", "side", "leverage", "quantity", "reason", "exit_plan"},
+					"required": []string{"symbol", "side", "leverage", "quantity", "stop_loss_price", "reason", "exit_plan"},
 				},
 			},
 		},
@@ -434,11 +442,17 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 	exitPlanRaw, _ := args["exit_plan"].(string)
 	exitPlan := strings.TrimSpace(exitPlanRaw)
 
+	// 新增：止损止盈价格
+	stopLossPrice, _ := args["stop_loss_price"].(float64)
+	takeProfitPrice, _ := args["take_profit_price"].(float64)
+
 	s.logger.Info("opening position",
 		zap.String("symbol", symbol),
 		zap.String("side", side),
 		zap.Int("leverage", leverage),
 		zap.Float64("margin_usdt", quantity),
+		zap.Float64("stop_loss_price", stopLossPrice),
+		zap.Float64("take_profit_price", takeProfitPrice),
 		zap.String("reason", reason),
 		zap.String("exit_plan", exitPlan))
 
@@ -459,6 +473,11 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 		return nil, fmt.Errorf("退出计划 exit_plan 不能为空，请明确止损与退出逻辑")
 	}
 
+	// 验证止损价格（必填）
+	if stopLossPrice <= 0 {
+		return nil, fmt.Errorf("止损价格 stop_loss_price 必须设置且大于0")
+	}
+
 	// 验证杠杆
 	if !s.validateLeverage(leverage) {
 		minLeverage, maxLeverage := s.leverageBounds()
@@ -474,6 +493,11 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 	price, err := s.exchange.GetCurrentPrice(ctx, symbol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current price: %w", err)
+	}
+
+	// 验证止损止盈价格的合理性
+	if err := s.validateStopPrices(price, side, stopLossPrice, takeProfitPrice); err != nil {
+		return nil, err
 	}
 
 	// 计算实际数量
@@ -555,15 +579,61 @@ func (s *AgentService) toolOpenPosition(ctx context.Context, args map[string]int
 		}
 	}
 
+	// ⭐ 创建止损单（硬止损）
+	stopLossOrderID := int64(0)
+	if err := s.createStopLossOrder(ctx, symbol, side, executedQty, stopLossPrice); err != nil {
+		s.logger.Error("failed to create stop loss order",
+			zap.String("symbol", symbol),
+			zap.Float64("stop_loss_price", stopLossPrice),
+			zap.Error(err))
+		// 不阻止开仓，但记录警告
+	} else {
+		s.logger.Info("stop loss order created",
+			zap.String("symbol", symbol),
+			zap.Float64("stop_loss_price", stopLossPrice))
+	}
+
+	// ⭐ 创建止盈单（可选）
+	takeProfitOrderID := int64(0)
+	if takeProfitPrice > 0 {
+		if err := s.createTakeProfitOrder(ctx, symbol, side, executedQty, takeProfitPrice); err != nil {
+			s.logger.Error("failed to create take profit order",
+				zap.String("symbol", symbol),
+				zap.Float64("take_profit_price", takeProfitPrice),
+				zap.Error(err))
+		} else {
+			s.logger.Info("take profit order created",
+				zap.String("symbol", symbol),
+				zap.Float64("take_profit_price", takeProfitPrice))
+		}
+	}
+
+	// 保存止损止盈到持仓记录
+	if err := s.positionService.UpdateStopPrices(ctx, symbol, side, stopLossPrice, takeProfitPrice); err != nil {
+		s.logger.Error("failed to update stop prices in position",
+			zap.String("symbol", symbol),
+			zap.Error(err))
+	}
+
+	message := fmt.Sprintf("成功开仓 %s %s，杠杆 %dx，保证金 %.2fU，价格 %.2f，止损 %.2f",
+		side, symbol, leverage, quantity, avgPrice, stopLossPrice)
+	if takeProfitPrice > 0 {
+		message += fmt.Sprintf("，止盈 %.2f", takeProfitPrice)
+	}
+
 	return map[string]interface{}{
-		"success":  true,
-		"order_id": order.OrderID,
-		"symbol":   symbol,
-		"side":     side,
-		"price":    avgPrice,
-		"quantity": executedQty,
-		"leverage": leverage,
-		"message":  fmt.Sprintf("成功开仓 %s %s，杠杆 %dx，保证金 %.2fU 价值 %.2f", side, symbol, leverage, quantity, avgPrice),
+		"success":              true,
+		"order_id":             order.OrderID,
+		"symbol":               symbol,
+		"side":                 side,
+		"price":                avgPrice,
+		"quantity":             executedQty,
+		"leverage":             leverage,
+		"stop_loss_price":      stopLossPrice,
+		"take_profit_price":    takeProfitPrice,
+		"stop_loss_order_id":   stopLossOrderID,
+		"take_profit_order_id": takeProfitOrderID,
+		"message":              message,
 	}, nil
 }
 
@@ -784,6 +854,52 @@ func (s *AgentService) calculatePositionSize(accountValue float64, riskPercent f
 	}
 
 	return riskAmount / (stopLossPercent / 100 * float64(leverage))
+}
+
+// validateStopPrices 验证止损止盈价格的合理性
+func (s *AgentService) validateStopPrices(currentPrice float64, side string, stopLossPrice, takeProfitPrice float64) error {
+	if side == "long" {
+		// 做多：止损必须低于当前价，止盈必须高于当前价
+		if stopLossPrice >= currentPrice {
+			return fmt.Errorf("做多时止损价%.2f必须低于当前价%.2f", stopLossPrice, currentPrice)
+		}
+		if takeProfitPrice > 0 && takeProfitPrice <= currentPrice {
+			return fmt.Errorf("做多时止盈价%.2f必须高于当前价%.2f", takeProfitPrice, currentPrice)
+		}
+	} else {
+		// 做空：止损必须高于当前价，止盈必须低于当前价
+		if stopLossPrice <= currentPrice {
+			return fmt.Errorf("做空时止损价%.2f必须高于当前价%.2f", stopLossPrice, currentPrice)
+		}
+		if takeProfitPrice > 0 && takeProfitPrice >= currentPrice {
+			return fmt.Errorf("做空时止盈价%.2f必须低于当前价%.2f", takeProfitPrice, currentPrice)
+		}
+	}
+	return nil
+}
+
+// createStopLossOrder 创建止损单
+func (s *AgentService) createStopLossOrder(ctx context.Context, symbol, side string, quantity, stopPrice float64) error {
+	// 做多止损 = 卖出；做空止损 = 买入
+	stopSide := exchange.OrderSideSell
+	if side == "short" {
+		stopSide = exchange.OrderSideBuy
+	}
+
+	_, err := s.exchange.CreateStopLossOrder(ctx, symbol, stopSide, quantity, stopPrice)
+	return err
+}
+
+// createTakeProfitOrder 创建止盈单
+func (s *AgentService) createTakeProfitOrder(ctx context.Context, symbol, side string, quantity, takeProfitPrice float64) error {
+	// 做多止盈 = 卖出；做空止盈 = 买入
+	takeProfitSide := exchange.OrderSideSell
+	if side == "short" {
+		takeProfitSide = exchange.OrderSideBuy
+	}
+
+	_, err := s.exchange.CreateTakeProfitOrder(ctx, symbol, takeProfitSide, quantity, takeProfitPrice)
+	return err
 }
 
 // SaveDecision 保存AI决策记录，返回决策ID

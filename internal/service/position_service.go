@@ -257,3 +257,16 @@ func (s *PositionService) StopSyncWorker() {
 		s.logger.Info("position sync worker stop signal sent")
 	}
 }
+
+// UpdateStopPrices 更新持仓的止损止盈价格
+func (s *PositionService) UpdateStopPrices(ctx context.Context, symbol, side string, stopLoss, takeProfit float64) error {
+	pos, err := s.PositionRepo.FindBySymbolAndSide(ctx, symbol, side)
+	if err != nil {
+		return err
+	}
+
+	pos.StopLoss = stopLoss
+	pos.TakeProfit = takeProfit
+
+	return s.PositionRepo.Save(ctx, &pos)
+}

@@ -494,3 +494,118 @@ func (b *BinanceClient) FormatQuantity(ctx context.Context, symbol string, quant
 
 	return quantity, nil
 }
+
+// CreateStopLossOrder 创建止损单（STOP_MARKET）
+func (b *BinanceClient) CreateStopLossOrder(ctx context.Context, symbol string, side OrderSide, quantity float64, stopPrice float64) (*OrderResult, error) {
+	// 格式化数量和价格
+	formattedQty, err := b.FormatQuantity(ctx, symbol, quantity)
+	if err != nil {
+		return nil, fmt.Errorf("failed to format quantity: %w", err)
+	}
+
+	// 获取精度信息
+	info, err := b.GetSymbolInfo(ctx, symbol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get symbol info: %w", err)
+	}
+
+	// 格式化数量和止损价
+	quantityStr := strconv.FormatFloat(formattedQty, 'f', info.QuantityPrecision, 64)
+	stopPriceStr := strconv.FormatFloat(stopPrice, 'f', info.PricePrecision, 64)
+
+	binanceSide := toBinanceSideType(side)
+
+	// 创建 STOP_MARKET 订单（止损市价单）
+	order, err := b.client.NewCreateOrderService().
+		Symbol(symbol).
+		Side(binanceSide).
+		Type(futures.OrderTypeStopMarket).
+		Quantity(quantityStr).
+		StopPrice(stopPriceStr).
+		ReduceOnly(true). // 止损单只平仓不开仓
+		Do(ctx)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stop loss order: %w", err)
+	}
+
+	avgPrice, _ := strconv.ParseFloat(order.AvgPrice, 64)
+	executedQty, _ := strconv.ParseFloat(order.ExecutedQuantity, 64)
+	origQty, _ := strconv.ParseFloat(order.OrigQuantity, 64)
+
+	return &OrderResult{
+		OrderID:     order.OrderID,
+		Symbol:      order.Symbol,
+		Side:        string(order.Side),
+		Type:        string(order.Type),
+		Quantity:    origQty,
+		Price:       stopPrice,
+		AvgPrice:    avgPrice,
+		Status:      string(order.Status),
+		ExecutedQty: executedQty,
+	}, nil
+}
+
+// CreateTakeProfitOrder 创建止盈单（TAKE_PROFIT_MARKET）
+func (b *BinanceClient) CreateTakeProfitOrder(ctx context.Context, symbol string, side OrderSide, quantity float64, takeProfitPrice float64) (*OrderResult, error) {
+	// 格式化数量和价格
+	formattedQty, err := b.FormatQuantity(ctx, symbol, quantity)
+	if err != nil {
+		return nil, fmt.Errorf("failed to format quantity: %w", err)
+	}
+
+	// 获取精度信息
+	info, err := b.GetSymbolInfo(ctx, symbol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get symbol info: %w", err)
+	}
+
+	// 格式化数量和止盈价
+	quantityStr := strconv.FormatFloat(formattedQty, 'f', info.QuantityPrecision, 64)
+	takeProfitPriceStr := strconv.FormatFloat(takeProfitPrice, 'f', info.PricePrecision, 64)
+
+	binanceSide := toBinanceSideType(side)
+
+	// 创建 TAKE_PROFIT_MARKET 订单（止盈市价单）
+	order, err := b.client.NewCreateOrderService().
+		Symbol(symbol).
+		Side(binanceSide).
+		Type(futures.OrderTypeTakeProfitMarket).
+		Quantity(quantityStr).
+		StopPrice(takeProfitPriceStr).
+		ReduceOnly(true). // 止盈单只平仓不开仓
+		Do(ctx)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to create take profit order: %w", err)
+	}
+
+	avgPrice, _ := strconv.ParseFloat(order.AvgPrice, 64)
+	executedQty, _ := strconv.ParseFloat(order.ExecutedQuantity, 64)
+	origQty, _ := strconv.ParseFloat(order.OrigQuantity, 64)
+
+	return &OrderResult{
+		OrderID:     order.OrderID,
+		Symbol:      order.Symbol,
+		Side:        string(order.Side),
+		Type:        string(order.Type),
+		Quantity:    origQty,
+		Price:       takeProfitPrice,
+		AvgPrice:    avgPrice,
+		Status:      string(order.Status),
+		ExecutedQty: executedQty,
+	}, nil
+}
+
+// CancelAllOrders 取消指定交易对的所有挂单
+func (b *BinanceClient) CancelAllOrders(ctx context.Context, symbol string) error {
+	err := b.client.NewCancelAllOpenOrdersService().
+		Symbol(symbol).
+		Do(ctx)
+
+	if err != nil {
+		return fmt.Errorf("failed to cancel all orders: %w", err)
+	}
+
+	return nil
+}

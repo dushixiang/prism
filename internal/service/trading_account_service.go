@@ -38,7 +38,7 @@ func NewTradingAccountService(db *gorm.DB, exchange exchange.Exchange, logger *z
 
 // AccountMetrics 账户指标
 type AccountMetrics struct {
-	TotalBalance        float64 `json:"total_balance"`         // 总资产（不含未实现盈亏）
+	TotalBalance        float64 `json:"total_balance"`         // 账户总净值（包含未实现盈亏）
 	Available           float64 `json:"available"`             // 可用余额
 	UnrealisedPnl       float64 `json:"unrealised_pnl"`        // 未实现盈亏
 	InitialBalance      float64 `json:"initial_balance"`       // 初始资金
@@ -57,8 +57,9 @@ func (s *TradingAccountService) GetAccountMetrics(ctx context.Context) (*Account
 		return nil, fmt.Errorf("failed to get account info: %w", err)
 	}
 
-	// 计算总资产（不包含未实现盈亏）
-	totalBalance := accountInfo.TotalBalance - accountInfo.UnrealizedPnl
+	// 账户总净值（包含未实现盈亏）
+	// 注意：accountInfo.TotalBalance 从交易所返回时已经包含了未实现盈亏
+	totalBalance := accountInfo.TotalBalance
 
 	// 从数据库获取初始资金和峰值资金
 	// 获取初始资金（第一条记录）

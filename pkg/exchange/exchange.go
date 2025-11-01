@@ -27,6 +27,11 @@ type Exchange interface {
 	CancelOrder(ctx context.Context, symbol string, orderID int64) error
 	GetOrderStatus(ctx context.Context, symbol string, orderID int64) (*OrderResult, error)
 
+	// 止损止盈订单（限价单/止损单）
+	CreateStopLossOrder(ctx context.Context, symbol string, side OrderSide, quantity float64, stopPrice float64) (*OrderResult, error)
+	CreateTakeProfitOrder(ctx context.Context, symbol string, side OrderSide, quantity float64, takeProfitPrice float64) (*OrderResult, error)
+	CancelAllOrders(ctx context.Context, symbol string) error
+
 	// 交易对信息
 	GetSymbolInfo(ctx context.Context, symbol string) (*SymbolInfo, error)
 	FormatQuantity(ctx context.Context, symbol string, quantity float64) (float64, error)
