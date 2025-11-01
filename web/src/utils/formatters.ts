@@ -1,8 +1,31 @@
-export const formatCurrency = (value: number | undefined) => {
+import {PRICE_UNIT} from '@/constants/currency';
+
+const numberFormatters = new Map<number, Intl.NumberFormat>();
+
+const getNumberFormatter = (fractionDigits: number) => {
+    if (!numberFormatters.has(fractionDigits)) {
+        numberFormatters.set(fractionDigits, new Intl.NumberFormat('zh-CN', {
+            minimumFractionDigits: fractionDigits,
+            maximumFractionDigits: fractionDigits,
+        }));
+    }
+    return numberFormatters.get(fractionDigits)!;
+};
+
+const formatNumericValue = (value: number | undefined, fractionDigits: number) => {
     if (value === undefined || Number.isNaN(value)) {
         return '-';
     }
-    return value.toLocaleString('zh-CN', {style: 'currency', currency: 'USD'});
+    return getNumberFormatter(fractionDigits).format(value);
+};
+
+const formatWithUnit = (value: number | undefined, fractionDigits: number) => {
+    const formattedValue = formatNumericValue(value, fractionDigits);
+    return formattedValue === '-' ? formattedValue : `${formattedValue} ${PRICE_UNIT}`;
+};
+
+export const formatCurrency = (value: number | undefined, fractionDigits = 2) => {
+    return formatWithUnit(value, fractionDigits);
 };
 
 export const formatPercent = (value: number | undefined) => {
@@ -14,13 +37,11 @@ export const formatPercent = (value: number | undefined) => {
 };
 
 export const formatNumber = (value: number | undefined, fractionDigits = 2) => {
-    if (value === undefined || Number.isNaN(value)) {
-        return '-';
-    }
-    return value.toLocaleString('zh-CN', {
-        minimumFractionDigits: fractionDigits,
-        maximumFractionDigits: fractionDigits,
-    });
+    return formatNumericValue(value, fractionDigits);
+};
+
+export const formatPrice = (value: number | undefined, fractionDigits = 4) => {
+    return formatWithUnit(value, fractionDigits);
 };
 
 export const formatDateTime = (value?: string) => {

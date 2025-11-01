@@ -1,4 +1,4 @@
-import {formatCurrency, formatNumber, formatPercent, getErrorMessage, getPnlColor} from '@/utils/formatters';
+import {formatCurrency, formatNumber, formatPercent, formatPrice, getErrorMessage, getPnlColor} from '@/utils/formatters';
 import {cardClass} from '@/constants/styles';
 import type {Position} from '@/types/trading';
 
@@ -51,18 +51,18 @@ export const PositionsList = ({positions, isLoading, error}: PositionsListProps)
                             <div className="flex justify-between">
                                 <span className="text-slate-500">开仓价格:</span>
                                 <span
-                                    className="font-mono">${formatNumber(position.entry_price, 4)}</span>
+                                    className="font-mono">{formatPrice(position.entry_price, 4)}</span>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-slate-500">标记价格:</span>
                                 <span
-                                    className="font-mono">${formatNumber(position.current_price, 4)}</span>
+                                    className="font-mono">{formatPrice(position.current_price, 4)}</span>
                             </div>
                             {position.liquidation_price && position.liquidation_price > 0 && (
                                 <div className="flex justify-between">
                                     <span className="text-slate-500">强平价格:</span>
                                     <span
-                                        className="font-mono text-rose-600">${formatNumber(position.liquidation_price, 4)}</span>
+                                        className="font-mono text-rose-600">{formatPrice(position.liquidation_price, 4)}</span>
                                 </div>
                             )}
                             <div className="flex justify-between">

@@ -1,4 +1,4 @@
-import {formatCurrency, formatDateTime, formatNumber, getPnlColor} from '@/utils/formatters';
+import {formatCurrency, formatDateTime, formatNumber, formatPrice, getPnlColor} from '@/utils/formatters';
 import {cardClass} from '@/constants/styles';
 import type {Trade} from '@/types/trading';
 
@@ -27,7 +27,7 @@ export const TradeItem = ({trade}: TradeItemProps) => {
             <div className="space-y-1 text-xs text-slate-700">
                 <div className="flex justify-between">
                     <span className="text-slate-500">价格:</span>
-                    <span className="font-mono text-slate-900">${formatNumber(trade.price, 4)}</span>
+                    <span className="font-mono text-slate-900">{formatPrice(trade.price, 4)}</span>
                 </div>
                 <div className="flex justify-between">
                     <span className="text-slate-500">数量:</span>
@@ -35,7 +35,7 @@ export const TradeItem = ({trade}: TradeItemProps) => {
                 </div>
                 <div className="flex justify-between">
                     <span className="text-slate-500">名义价值:</span>
-                    <span className="font-mono text-slate-900">${formatNumber(notional, 0)}</span>
+                    <span className="font-mono text-slate-900">{formatPrice(notional, 0)}</span>
                 </div>
                 {trade.leverage > 1 && (
                     <div className="flex justify-between">
