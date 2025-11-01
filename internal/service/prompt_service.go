@@ -526,13 +526,6 @@ func (s *PromptService) writeTradeHistory(sb *strings.Builder, trades []models.T
 	sb.WriteString("\n")
 }
 
-// writePerformanceMetrics 写入性能指标（已废弃，夏普比率已整合到账户状态中）
-// 保留此函数以防需要单独展示其他性能指标
-func (s *PromptService) writePerformanceMetrics(sb *strings.Builder, metrics *AccountMetrics) {
-	// 此函数已不再使用，夏普比率已整合到 writeAccountInfo 中
-	return
-}
-
 // getPricePrecision 根据价格范围获取合适的小数精度
 func getPricePrecision(avgPrice float64) int {
 	switch {
