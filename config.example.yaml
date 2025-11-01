@@ -32,7 +32,7 @@ app:
     paper_wallet:
       initial_balance: 1000.0  # 纸钱包模式的初始余额（USDT）
     symbols: [ "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT" ]  # 策略关注的交易对列表。
-    interval_minutes: 10  # 策略重新评估与下单的最小时间间隔（分钟）。
+    interval_minutes: 15  # 策略重新评估与下单的最小时间间隔（分钟）。
     max_drawdown_percent: 15  # 账户回撤的参考上限（模型需自行遵守）。
     max_positions: 5  # 同时持有的最大仓位数量。
     max_leverage: 15  # 建仓使用的最高杠杆倍数。
