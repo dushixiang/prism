@@ -26,6 +26,7 @@ type TimeframeIndicators struct {
 	RSI14      float64 `json:"rsi14"`
 	ATR3       float64 `json:"atr3"`
 	ATR14      float64 `json:"atr14"`
+	ADX14      float64 `json:"adx14"` // ADX 平均趋向指标（14周期）
 	Volume     float64 `json:"volume"`
 	AvgVolume  float64 `json:"avg_volume"`
 }
@@ -76,6 +77,9 @@ func (s *IndicatorService) CalculateIndicators(klines []*exchange.Kline) *Timefr
 	atr3 := ta.ATR(highs, lows, closes, 3)
 	atr14 := ta.ATR(highs, lows, closes, 14)
 
+	// 计算ADX
+	adx14 := ta.ADX(highs, lows, closes, 14)
+
 	// 计算平均成交量
 	avgVolume := 0.0
 	for _, v := range volumes {
@@ -97,6 +101,7 @@ func (s *IndicatorService) CalculateIndicators(klines []*exchange.Kline) *Timefr
 		RSI14:      ta.Last(rsi14, 0),
 		ATR3:       ta.Last(atr3, 0),
 		ATR14:      ta.Last(atr14, 0),
+		ADX14:      ta.Last(adx14, 0),
 		Volume:     volumes[lastIdx],
 		AvgVolume:  avgVolume,
 	}

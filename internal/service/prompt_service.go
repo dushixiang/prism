@@ -253,23 +253,38 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 		if data.LongerTermData != nil {
 			sb.WriteString("**1小时趋势**\n")
 
-			// ⭐ 趋势状态判断 (新增逻辑)
+			// ⭐ 趋势状态判断 (基于 ADX 的新逻辑)
 			var trendStatus string
+			var trendStrength string // 趋势强度级别
 			if ind1h, ok := data.Timeframes["1h"]; ok && ind1h.Price > 0 {
 				strength := (ind1h.EMA20 - ind1h.EMA50) / ind1h.Price * 100
-				absStrength := strength
-				if absStrength < 0 {
-					absStrength = -absStrength
+				adx := ind1h.ADX14
+
+				// ⭐ 核心逻辑：ADX 决定是否有趋势，EMA 决定趋势方向
+				if adx < 25 {
+					// ADX < 25: 无论 EMA 如何，都视为震荡
+					trendStatus = "震荡盘整"
+					trendStrength = "无趋势"
+				} else if adx >= 25 && adx < 40 {
+					// ADX 25-40: 常规趋势
+					if strength > 0 {
+						trendStatus = "上涨趋势"
+					} else {
+						trendStatus = "下跌趋势"
+					}
+					trendStrength = "常规趋势"
+				} else {
+					// ADX >= 40: 强劲趋势
+					if strength > 0 {
+						trendStatus = "上涨趋势"
+					} else {
+						trendStatus = "下跌趋势"
+					}
+					trendStrength = "强劲趋势"
 				}
 
-				if absStrength < 0.5 { // EMA20和EMA50的偏离度小于0.5%，视为震荡
-					trendStatus = "震荡盘整"
-				} else if strength > 0 {
-					trendStatus = "上涨趋势"
-				} else {
-					trendStatus = "下跌趋势"
-				}
-				sb.WriteString(fmt.Sprintf("- **趋势状态**: **%s** (均线强度: %.2f%%)\n", trendStatus, strength))
+				sb.WriteString(fmt.Sprintf("- **趋势状态**: **%s** | **趋势强度**: **%s** (ADX=%.1f)\n", trendStatus, trendStrength, adx))
+				sb.WriteString(fmt.Sprintf("- **均线偏离度**: %.2f%% (EMA20 vs EMA50)\n", strength))
 			}
 
 			// 中文化状态
