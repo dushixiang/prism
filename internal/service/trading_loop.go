@@ -181,8 +181,8 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 	// ========== Step 4: 生成AI提示词 ==========
 	t.logger.Info("[STEP 4/6] Generating LLM prompt...")
 
-	// 获取历史交易
-	recentTrades, _ := t.agentService.GetRecentTrades(ctx, 10)
+	// 获取历史交易(最近20笔)
+	recentTrades, _ := t.agentService.GetRecentTrades(ctx, 20)
 
 	// 获取所有活跃订单
 	activeOrders, err := t.orderRepo.FindAllActive(ctx)

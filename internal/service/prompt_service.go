@@ -238,7 +238,7 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 					startPrice, endPrice, priceChange, lowPrice, highPrice, volatility))
 
 				// 只显示最近8根K线的收盘价（约2小时），用于观察短期趋势
-				recentCount := 8
+				recentCount := 16
 				if count < recentCount {
 					recentCount = count
 				}
@@ -509,7 +509,7 @@ func (s *PromptService) writeActiveOrders(sb *strings.Builder, orders []models.O
 
 // writeTradeHistory 写入交易历史
 func (s *PromptService) writeTradeHistory(sb *strings.Builder, trades []models.Trade) {
-	sb.WriteString("## 历史交易记录（最近10笔）\n\n")
+	sb.WriteString("## 历史交易记录（最近20笔）\n\n")
 
 	if len(trades) == 0 {
 		sb.WriteString("暂无交易记录\n\n")
@@ -554,6 +554,12 @@ func (s *PromptService) writeTradeHistory(sb *strings.Builder, trades []models.T
 			}
 			sb.WriteString(fmt.Sprintf(", 盈亏=%s$%.2f", pnlSign, trade.Pnl))
 		}
+
+		// 添加交易原因,帮助AI了解盈亏原因
+		if strings.TrimSpace(trade.Reason) != "" {
+			sb.WriteString(fmt.Sprintf(", 原因: %s", trade.Reason))
+		}
+
 		sb.WriteString("\n")
 	}
 	sb.WriteString("\n")
