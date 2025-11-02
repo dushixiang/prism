@@ -206,6 +206,21 @@ func (h *TradingHandler) GetTrades(c echo.Context) error {
 	})
 }
 
+// GetStats 获取交易统计数据
+// GET /api/trading/stats
+func (h *TradingHandler) GetStats(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	stats, err := h.agentService.GetTradeStats(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, stats)
+}
+
 // GetEquityCurve 获取资金曲线数据
 // GET /api/trading/equity-curve
 func (h *TradingHandler) GetEquityCurve(c echo.Context) error {
@@ -342,6 +357,7 @@ func (h *TradingHandler) RegisterRoutes(g *echo.Group) {
 	trading.GET("/positions", h.GetPositions)
 	trading.GET("/decisions", h.GetDecisions)
 	trading.GET("/trades", h.GetTrades)
+	trading.GET("/stats", h.GetStats)
 	trading.GET("/equity-curve", h.GetEquityCurve)
 	trading.GET("/llm-logs", h.GetLLMLogs)
 }

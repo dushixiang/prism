@@ -356,20 +356,6 @@ func (s *PositionService) checkPositionOrders(ctx context.Context, positionID st
 	// 逐个查询交易所订单状态
 	for i := range orders {
 		order := &orders[i]
-
-		// 检查仓位是否存在
-		posExists, err := s.PositionRepo.ExistsById(ctx, positionID)
-		if err != nil {
-			s.logger.Error("failed to check position existence")
-			continue
-		}
-		// 如果仓位不存在，直接取消订单
-		if !posExists {
-			_ = s.cancelOrderOnExchange(ctx, order, "position deleted")
-			s.updateOrderStatusToCanceled(ctx, order.ID)
-			continue
-		}
-
 		exchangeStatus, err := s.queryExchangeOrderStatus(ctx, order)
 		if err != nil {
 			s.logger.Warn("failed to query order status from exchange",
@@ -460,19 +446,72 @@ func (s *PositionService) syncSingleOrderStatus(ctx context.Context, order *mode
 }
 
 // recordTriggeredOrderTrade 记录由订单触发的平仓交易
+// 使用交易所的交易历史获取准确的成交价格、数量和手续费
+// 将多笔成交合并为一条记录,使用最后一笔成交的时间
 func (s *PositionService) recordTriggeredOrderTrade(ctx context.Context, order *models.Order) {
+	// 解析交易所订单ID
+	exchangeOrderID, err := s.parseExchangeOrderID(order.ExchangeID)
+	if err != nil {
+		s.logger.Error("failed to parse exchange order id for trade recording",
+			zap.String("order_id", order.ID),
+			zap.String("exchange_id", order.ExchangeID),
+			zap.Error(err))
+		return
+	}
+
+	// 从交易所获取该订单的真实成交记录
+	tradeHistory, err := s.exchange.GetTradeHistory(ctx, order.Symbol, exchangeOrderID, 10)
+	if err != nil {
+		s.logger.Error("failed to get trade history from exchange",
+			zap.String("symbol", order.Symbol),
+			zap.Int64("order_id", exchangeOrderID),
+			zap.Error(err))
+		return
+	}
+
+	if len(tradeHistory) == 0 {
+		s.logger.Error("no trade history found for triggered order",
+			zap.String("symbol", order.Symbol),
+			zap.Int64("order_id", exchangeOrderID),
+			zap.String("order_type", string(order.OrderType)))
+		return
+	}
+
+	// 汇总所有成交记录（订单可能分多笔成交）
+	var totalQuantity, totalCommission, totalRealizedPnl float64
+	var weightedPriceSum float64
+	var lastTradeTime int64
+
+	for _, t := range tradeHistory {
+		totalQuantity += t.Quantity
+		totalCommission += t.Commission
+		totalRealizedPnl += t.RealizedPnl
+		weightedPriceSum += t.Price * t.Quantity
+		// 记录最后一笔成交时间
+		if t.Time > lastTradeTime {
+			lastTradeTime = t.Time
+		}
+	}
+
+	// 计算加权平均成交价
+	avgPrice := order.TriggerPrice
+	if totalQuantity > 0 {
+		avgPrice = weightedPriceSum / totalQuantity
+	}
+
 	trade := &models.Trade{
 		ID:         ulid.Make().String(),
 		Symbol:     order.Symbol,
 		Type:       "close",
 		Side:       order.PositionSide,
-		Price:      order.TriggerPrice,
-		Quantity:   order.Quantity,
-		Fee:        order.TriggerPrice * order.Quantity * 0.001, // 估算手续费 0.1%
-		Reason:     fmt.Sprintf("订单触发: %s @ $%.2f", order.OrderType, order.TriggerPrice),
+		Price:      avgPrice,
+		Quantity:   totalQuantity,
+		Fee:        totalCommission,
+		Pnl:        totalRealizedPnl,
+		Reason:     fmt.Sprintf("订单触发: %s @ $%.2f", order.OrderType, avgPrice),
 		OrderID:    order.ExchangeID,
 		PositionID: order.PositionID,
-		ExecutedAt: time.Now(),
+		ExecutedAt: time.UnixMilli(lastTradeTime),
 	}
 
 	if err := s.tradeRepo.Create(ctx, trade); err != nil {
@@ -480,10 +519,15 @@ func (s *PositionService) recordTriggeredOrderTrade(ctx context.Context, order *
 			zap.String("order_id", order.ID),
 			zap.Error(err))
 	} else {
-		s.logger.Info("recorded triggered order trade",
+		s.logger.Info("recorded triggered order trade from exchange history",
 			zap.String("trade_id", trade.ID),
 			zap.String("symbol", trade.Symbol),
-			zap.String("order_type", string(order.OrderType)))
+			zap.String("order_type", string(order.OrderType)),
+			zap.Float64("avg_price", avgPrice),
+			zap.Float64("quantity", totalQuantity),
+			zap.Float64("fee", totalCommission),
+			zap.Float64("pnl", totalRealizedPnl),
+			zap.Int("exchange_trades", len(tradeHistory)))
 	}
 }
 

@@ -11,6 +11,7 @@ import type {
     DecisionsResponse,
     EquityCurveResponse,
     PositionsResponse,
+    StatsResponse,
     TradesResponse,
     TradingStatusResponse,
 } from '../types/trading';
@@ -61,6 +62,14 @@ export const Dashboard = () => {
     });
 
     const {
+        data: statsData,
+    } = useQuery<StatsResponse>({
+        queryKey: ['trading-stats'],
+        queryFn: () => fetcher<StatsResponse>('/api/trading/stats'),
+        refetchInterval: 15000,
+    });
+
+    const {
         data: equityCurveData,
         error: equityCurveError,
     } = useQuery<EquityCurveResponse>({
@@ -74,24 +83,6 @@ export const Dashboard = () => {
         () => positionsData?.positions ?? statusData?.positions ?? [],
         [positionsData?.positions, statusData?.positions],
     );
-
-    // 计算统计数据
-    const stats = useMemo(() => {
-        const trades = tradesData?.trades ?? [];
-        const closedTrades = trades.filter(t => t.type.toLowerCase() === 'close');
-        const winningTrades = closedTrades.filter(t => t.pnl > 0);
-        const losingTrades = closedTrades.filter(t => t.pnl < 0);
-        const winRate = closedTrades.length > 0 ? (winningTrades.length / closedTrades.length) * 100 : 0;
-        const totalPnl = closedTrades.reduce((sum, t) => sum + t.pnl, 0);
-
-        return {
-            totalTrades: trades.length,
-            winningTrades: winningTrades.length,
-            losingTrades: losingTrades.length,
-            winRate,
-            totalPnl,
-        };
-    }, [tradesData?.trades]);
 
     return (
         <div className="flex min-h-screen flex-col bg-slate-50 lg:h-screen lg:overflow-hidden">
@@ -152,7 +143,7 @@ export const Dashboard = () => {
                         decisions={decisionsData?.decisions}
                         decisionsError={decisionsError}
                         decisionsCount={decisionsData?.count ?? 0}
-                        stats={stats}
+                        stats={statsData}
                     />
                 </div>
             </div>

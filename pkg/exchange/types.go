@@ -67,3 +67,17 @@ func (o OrderType) String() string {
 func (o OrderStatus) String() string {
 	return string(o)
 }
+
+// TradeHistory 交易历史记录
+type TradeHistory struct {
+	TradeID         int64   // 交易ID
+	OrderID         int64   // 订单ID
+	Symbol          string  // 交易对
+	Side            string  // 方向 (BUY/SELL)
+	Price           float64 // 成交价格
+	Quantity        float64 // 成交数量
+	Commission      float64 // 手续费
+	CommissionAsset string  // 手续费资产
+	RealizedPnl     float64 // 实现盈亏
+	Time            int64   // 成交时间戳(毫秒)
+}

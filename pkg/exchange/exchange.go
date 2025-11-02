@@ -32,6 +32,9 @@ type Exchange interface {
 	CreateTakeProfitOrder(ctx context.Context, symbol string, side OrderSide, quantity float64, takeProfitPrice float64) (*OrderResult, error)
 	CancelAllOrders(ctx context.Context, symbol string) error
 
+	// 交易历史
+	GetTradeHistory(ctx context.Context, symbol string, orderId int64, limit int) ([]*TradeHistory, error)
+
 	// 交易对信息
 	GetSymbolInfo(ctx context.Context, symbol string) (*SymbolInfo, error)
 	FormatQuantity(ctx context.Context, symbol string, quantity float64) (float64, error)

@@ -130,3 +130,20 @@ export type EquityCurveResponse = {
     count: number;
     data: EquityCurveDataPoint[];
 };
+
+export type TradeStats = {
+    total_trades: number;
+    close_trades: number;
+    winning_trades: number;
+    losing_trades: number;
+    win_rate: number;
+    total_pnl: number;
+    total_fee: number;
+    avg_win: number;
+    avg_loss: number;
+    largest_win: number;
+    largest_loss: number;
+    profit_factor: number;
+};
+
+export type StatsResponse = TradeStats;

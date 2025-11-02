@@ -436,3 +436,10 @@ func (p *PaperWallet) CancelAllOrders(ctx context.Context, symbol string) error 
 	// 纸钱包模式：没有实际的挂单需要取消
 	return nil
 }
+
+// GetTradeHistory 获取交易历史（纸钱包模式返回空）
+func (p *PaperWallet) GetTradeHistory(ctx context.Context, symbol string, orderId int64, limit int) ([]*TradeHistory, error) {
+	// 纸钱包模式不记录详细的交易历史，返回空数组
+	// 交易记录在应用层通过 Trade 表管理
+	return []*TradeHistory{}, nil
+}

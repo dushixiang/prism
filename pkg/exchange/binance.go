@@ -609,3 +609,49 @@ func (b *BinanceClient) CancelAllOrders(ctx context.Context, symbol string) erro
 
 	return nil
 }
+
+// GetTradeHistory 获取交易历史
+// 如果指定了 orderId，则返回该订单的成交记录；否则返回最近的成交记录
+func (b *BinanceClient) GetTradeHistory(ctx context.Context, symbol string, orderId int64, limit int) ([]*TradeHistory, error) {
+	service := b.client.NewListAccountTradeService().
+		Symbol(symbol)
+
+	if orderId > 0 {
+		// 查询特定订单的成交记录
+		service.OrderID(orderId)
+	}
+
+	if limit > 0 && limit <= 1000 {
+		service.Limit(limit)
+	} else {
+		service.Limit(100) // 默认限制100条
+	}
+
+	trades, err := service.Do(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get trade history: %w", err)
+	}
+
+	result := make([]*TradeHistory, 0, len(trades))
+	for _, t := range trades {
+		price, _ := strconv.ParseFloat(t.Price, 64)
+		qty, _ := strconv.ParseFloat(t.Quantity, 64)
+		commission, _ := strconv.ParseFloat(t.Commission, 64)
+		realizedPnl, _ := strconv.ParseFloat(t.RealizedPnl, 64)
+
+		result = append(result, &TradeHistory{
+			TradeID:         t.ID,
+			OrderID:         t.OrderID,
+			Symbol:          t.Symbol,
+			Side:            string(t.Side),
+			Price:           price,
+			Quantity:        qty,
+			Commission:      commission,
+			CommissionAsset: t.CommissionAsset,
+			RealizedPnl:     realizedPnl,
+			Time:            t.Time,
+		})
+	}
+
+	return result, nil
+}

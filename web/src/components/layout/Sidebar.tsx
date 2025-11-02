@@ -4,7 +4,7 @@ import {formatCurrency} from '@/utils/formatters.ts';
 import {PositionsList} from '../trading/PositionsList';
 import {TradesList} from '../trading/TradesList';
 import {DecisionsList} from '../trading/DecisionsList';
-import type {Decision, Position, Trade} from '@/types/trading.ts';
+import type {Decision, Position, Trade, TradeStats} from '@/types/trading.ts';
 
 interface SidebarProps {
     positions: Position[];
@@ -15,13 +15,7 @@ interface SidebarProps {
     decisions: Decision[] | undefined;
     decisionsError: unknown;
     decisionsCount: number;
-    stats: {
-        totalTrades: number;
-        winningTrades: number;
-        losingTrades: number;
-        winRate: number;
-        totalPnl: number;
-    };
+    stats: TradeStats | undefined;
 }
 
 export const Sidebar = ({
@@ -59,7 +53,7 @@ export const Sidebar = ({
                             : 'text-slate-600 hover:bg-slate-50'
                     }`}
                 >
-                    交易 ({stats.totalTrades})
+                    交易 ({stats?.total_trades ?? 0})
                 </button>
                 <button
                     onClick={() => setActiveTab('decisions')}
@@ -83,23 +77,23 @@ export const Sidebar = ({
                     </h3>
                     <span className="text-xs text-slate-500">
                         {activeTab === 'positions' && `共 ${positions.length} 个`}
-                        {activeTab === 'trades' && `共 ${stats.totalTrades} 笔`}
+                        {activeTab === 'trades' && `共 ${stats?.total_trades ?? 0} 笔`}
                         {activeTab === 'decisions' && `最近 ${decisionsCount} 次`}
                     </span>
                 </div>
-                {activeTab === 'trades' && stats.totalTrades > 0 && (
+                {activeTab === 'trades' && stats && stats.total_trades > 0 && (
                     <div className="mt-2 flex flex-wrap gap-3 text-xs sm:text-sm">
                         <span className="text-emerald-600">
-                            胜 {stats.winningTrades}
+                            胜 {stats.winning_trades}
                         </span>
                         <span className="text-rose-600">
-                            负 {stats.losingTrades}
+                            负 {stats.losing_trades}
                         </span>
                         <span className="text-slate-600">
-                            胜率 {stats.winRate.toFixed(1)}%
+                            胜率 {stats.win_rate.toFixed(1)}%
                         </span>
-                        <span className={stats.totalPnl > 0 ? 'text-emerald-600' : stats.totalPnl < 0 ? 'text-rose-600' : 'text-slate-600'}>
-                            总盈亏 {formatCurrency(stats.totalPnl)}
+                        <span className={stats.total_pnl > 0 ? 'text-emerald-600' : stats.total_pnl < 0 ? 'text-rose-600' : 'text-slate-600'}>
+                            总盈亏 {formatCurrency(stats.total_pnl)}
                         </span>
                     </div>
                 )}

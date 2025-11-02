@@ -118,19 +118,6 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 		pricePrecision := getPricePrecision(data.CurrentPrice)
 		priceFormat := fmt.Sprintf("%%.%df", pricePrecision)
 
-		// 判断趋势方向（基于1h EMA）
-		trendEmoji := "→" // 震荡
-		trendText := "震荡"
-		if data.LongerTermData != nil {
-			if data.LongerTermData.EMA20vsEMA50 == "above" {
-				trendEmoji = "↗"
-				trendText = "上涨"
-			} else if data.LongerTermData.EMA20vsEMA50 == "below" {
-				trendEmoji = "↘"
-				trendText = "下跌"
-			}
-		}
-
 		// 获取15m指标判断短期状态
 		var shortTermStatus string
 		if ind15m, ok := data.Timeframes["15m"]; ok {
@@ -141,8 +128,8 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 			}
 		}
 
-		sb.WriteString(fmt.Sprintf("### %s %s %s%s\n",
-			symbol, trendEmoji, trendText, shortTermStatus))
+		sb.WriteString(fmt.Sprintf("### %s %s\n",
+			symbol, shortTermStatus))
 
 		sb.WriteString(fmt.Sprintf("💰 $"+priceFormat+" | 📊 资金费率 %.4f%%\n\n",
 			data.CurrentPrice, data.FundingRate*100))

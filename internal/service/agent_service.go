@@ -1240,6 +1240,11 @@ func (s *AgentService) GetRecentTrades(ctx context.Context, limit int) ([]models
 	return trades, nil
 }
 
+// GetTradeStats 获取交易统计数据
+func (s *AgentService) GetTradeStats(ctx context.Context) (*repo.TradeStats, error) {
+	return s.TradeRepo.GetTradeStats(ctx)
+}
+
 // GetRecentLLMLogs 获取最近的LLM日志
 func (s *AgentService) GetRecentLLMLogs(ctx context.Context, limit int) ([]*models.LLMLog, error) {
 	logs, err := s.LLMLogRepo.FindRecentLogs(ctx, limit)
