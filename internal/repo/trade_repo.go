@@ -44,18 +44,18 @@ func (r TradeRepo) FindFirstTrade(ctx context.Context) (*models.Trade, error) {
 
 // TradeStats 交易统计数据
 type TradeStats struct {
-	TotalTrades   int     `json:"total_trades,omitempty"`   // 总交易数
-	CloseTrades   int     `json:"close_trades,omitempty"`   // 平仓交易数
-	WinningTrades int     `json:"winning_trades,omitempty"` // 盈利交易数
-	LosingTrades  int     `json:"losing_trades,omitempty"`  // 亏损交易数
-	WinRate       float64 `json:"win_rate,omitempty"`       // 胜率(%)
-	TotalPnl      float64 `json:"total_pnl,omitempty"`      // 总盈亏
-	TotalFee      float64 `json:"total_fee,omitempty"`      // 总手续费
-	AvgWin        float64 `json:"avg_win,omitempty"`        // 平均盈利
-	AvgLoss       float64 `json:"avg_loss,omitempty"`       // 平均亏损
-	LargestWin    float64 `json:"largest_win,omitempty"`    // 最大盈利
-	LargestLoss   float64 `json:"largest_loss,omitempty"`   // 最大亏损
-	ProfitFactor  float64 `json:"profit_factor,omitempty"`  // 盈亏比(总盈利/总亏损)
+	TotalTrades   int     `json:"total_trades"`   // 总交易数
+	CloseTrades   int     `json:"close_trades"`   // 平仓交易数
+	WinningTrades int     `json:"winning_trades"` // 盈利交易数
+	LosingTrades  int     `json:"losing_trades"`  // 亏损交易数
+	WinRate       float64 `json:"win_rate"`       // 胜率(%)
+	TotalPnl      float64 `json:"total_pnl"`      // 总盈亏
+	TotalFee      float64 `json:"total_fee"`      // 总手续费
+	AvgWin        float64 `json:"avg_win"`        // 平均盈利
+	AvgLoss       float64 `json:"avg_loss"`       // 平均亏损
+	LargestWin    float64 `json:"largest_win"`    // 最大盈利
+	LargestLoss   float64 `json:"largest_loss"`   // 最大亏损
+	ProfitFactor  float64 `json:"profit_factor"`  // 盈亏比(总盈利/总亏损)
 }
 
 // GetTradeStats 获取交易统计数据
