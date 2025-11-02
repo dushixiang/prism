@@ -253,12 +253,31 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 		if data.LongerTermData != nil {
 			sb.WriteString("**1小时趋势**\n")
 
+			// ⭐ 趋势状态判断 (新增逻辑)
+			var trendStatus string
+			if ind1h, ok := data.Timeframes["1h"]; ok && ind1h.Price > 0 {
+				strength := (ind1h.EMA20 - ind1h.EMA50) / ind1h.Price * 100
+				absStrength := strength
+				if absStrength < 0 {
+					absStrength = -absStrength
+				}
+
+				if absStrength < 0.5 { // EMA20和EMA50的偏离度小于0.5%，视为震荡
+					trendStatus = "震荡盘整"
+				} else if strength > 0 {
+					trendStatus = "上涨趋势"
+				} else {
+					trendStatus = "下跌趋势"
+				}
+				sb.WriteString(fmt.Sprintf("- **趋势状态**: **%s** (均线强度: %.2f%%)\n", trendStatus, strength))
+			}
+
 			// 中文化状态
 			emaStatus := translateStatus(data.LongerTermData.EMA20vsEMA50, "均线", "之上", "之下", "持平")
 			atrStatus := translateStatus(data.LongerTermData.ATR3vsATR14, "短期波动", "加剧", "减弱", "稳定")
 			volStatus := translateStatus(data.LongerTermData.VolumeVsAvg, "成交量", "放大", "萎缩", "相同")
 
-			sb.WriteString(fmt.Sprintf("- 状态: %s | %s | %s\n", emaStatus, atrStatus, volStatus))
+			sb.WriteString(fmt.Sprintf("- 细节: %s | %s | %s\n", emaStatus, atrStatus, volStatus))
 
 			// 1小时序列数据（最近10点）
 			if len(data.LongerTermData.MACDSeries) > 0 || len(data.LongerTermData.RSI14Series) > 0 {
