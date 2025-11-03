@@ -246,8 +246,8 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 			}
 
 			// 波动率和成交量状态（客观描述）
-			atrStatus := translateStatus(data.LongerTermData.ATR3vsATR14, "ATR3 vs ATR14", "高于", "低于", "等于")
-			volStatus := translateStatus(data.LongerTermData.VolumeVsAvg, "当前成交量 vs 均值", "高于", "低于", "等于")
+			atrStatus := translateStatus(data.LongerTermData.ATR3vsATR14, "ATR3", "ATR14", "高于", "低于", "等于")
+			volStatus := translateStatus(data.LongerTermData.VolumeVsAvg, "当前成交量", "均值", "高于", "低于", "等于")
 
 			sb.WriteString(fmt.Sprintf("- 波动与成交量: %s | %s\n", atrStatus, volStatus))
 
@@ -602,16 +602,16 @@ func formatVolume(vol float64) string {
 }
 
 // translateStatus 将英文状态关键字翻译为更具可读性的中文
-func translateStatus(status, prefix, above, below, equal string) string {
+func translateStatus(status, v1, v2, above, below, equal string) string {
 	switch status {
 	case "above":
-		return fmt.Sprintf("%s%s", prefix, above)
+		return fmt.Sprintf("%s %s %s", v1, above, v2)
 	case "below":
-		return fmt.Sprintf("%s%s", prefix, below)
+		return fmt.Sprintf("%s %s %s", v1, below, v2)
 	case "equal":
-		return fmt.Sprintf("%s%s", prefix, equal)
+		return fmt.Sprintf("%s %s %s", v1, equal, v2)
 	default:
-		return fmt.Sprintf("%s未知", prefix)
+		return ""
 	}
 }
 
