@@ -1,5 +1,7 @@
 package ta
 
+import "github.com/dushixiang/prism/pkg/exchange"
+
 func Last(s []float64, position int) float64 {
 	return s[len(s)-1-position]
 }
@@ -54,4 +56,24 @@ func Highest(high []float64, period int) float64 {
 		}
 	}
 	return maxVal
+}
+
+// HighLow 函数用于计算K线切片中的最高价和最低价
+func HighLow(klines []*exchange.Kline) (float64, float64) {
+	if len(klines) == 0 {
+		return 0, 0
+	}
+
+	high := klines[0].High
+	low := klines[0].Low
+
+	for _, k := range klines {
+		if k.High > high {
+			high = k.High
+		}
+		if k.Low < low {
+			low = k.Low
+		}
+	}
+	return high, low
 }

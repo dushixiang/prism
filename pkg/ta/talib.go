@@ -17,9 +17,9 @@ const (
 	TypeT3MA  = talib.T3MA
 )
 
-// BB - Bollinger Bands
-func BB(input []float64, period int, deviation float64, maType MaType) ([]float64, []float64, []float64) {
-	return talib.BBands(input, period, deviation, deviation, maType)
+// BBands - Bollinger Bands
+func BBands(input []float64, period int, nbDevUp float64, nbDevDn float64, maType MaType) ([]float64, []float64, []float64) {
+	return talib.BBands(input, period, nbDevUp, nbDevDn, maType)
 }
 
 // DEMA - double exponential moving average

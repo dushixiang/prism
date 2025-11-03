@@ -40,6 +40,8 @@ type MarketData struct {
 	Timeframes     map[string]*TimeframeIndicators `json:"timeframes"`
 	IntradaySeries *TimeSeriesData                 `json:"intraday_series"`  // 日内15分钟序列
 	LongerTermData *LongerTermContext              `json:"longer_term_data"` // 1小时更长期上下文
+	RecentHigh     float64                         `json:"recent_high"`      // 近期高点
+	RecentLow      float64                         `json:"recent_low"`       // 近期低点
 }
 
 // LongerTermContext 更长期上下文（1小时级别）
@@ -112,6 +114,17 @@ func (s *MarketService) CollectMarketData(ctx context.Context, symbol string) (*
 					zap.Strings("issues", issues))
 			}
 		}
+	}
+
+	// 计算近期高低点 (基于15m K线，周期96根 ≈ 24小时)
+	if len(klines15m) > 0 {
+		recentKlines := klines15m
+		if len(klines15m) > 96 {
+			recentKlines = klines15m[len(klines15m)-96:]
+		}
+		high, low := ta.HighLow(recentKlines)
+		marketData.RecentHigh = high
+		marketData.RecentLow = low
 	}
 
 	// 获取当前价格

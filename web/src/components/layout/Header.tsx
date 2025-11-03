@@ -7,6 +7,8 @@ interface HeaderProps {
 }
 
 export const Header = ({loopStatus, accountMetrics}: HeaderProps) => {
+    const isRunning = loopStatus?.is_running ?? false;
+
     return (
         <header className="shrink-0 border-b border-slate-200 bg-white/95 backdrop-blur">
             <div
@@ -15,6 +17,14 @@ export const Header = ({loopStatus, accountMetrics}: HeaderProps) => {
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex items-center gap-3">
                             <h1 className="text-xl font-semibold text-slate-900 sm:text-2xl">Prism 交易监控</h1>
+
+                            {/* 运行状态指示器 */}
+                            <div className="flex items-center gap-2">
+                                <div className={`h-2 w-2 rounded-full ${isRunning ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}/>
+                                <span className="text-xs text-slate-500 sm:text-sm">
+                                    {isRunning ? '运行中' : '已停止'}
+                                </span>
+                            </div>
                             <span className="text-xs text-slate-500 sm:text-sm">策略状态一目了然</span>
                             <a
                                 href="https://github.com/dushixiang/prism"

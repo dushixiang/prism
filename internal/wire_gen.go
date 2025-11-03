@@ -35,19 +35,30 @@ func InitializeApp(logger *zap.Logger, db *gorm.DB, conf *config.Config) (*AppCo
 	orderRepo := repo.NewOrderRepo(db)
 	tradeRepo := repo.NewTradeRepo(db)
 	positionService := service.NewPositionService(db, exchange, orderRepo, tradeRepo, logger)
-	promptService := service.NewPromptService(conf, tradeRepo, orderRepo)
+	adminConfigService := service.NewAdminConfigService(logger, db)
+	promptService := service.NewPromptService(tradeRepo, orderRepo, adminConfigService)
 	client := provideOpenAIClient(conf, logger)
-	agentService := service.NewAgentService(db, client, exchange, positionService, logger, conf)
-	tradingLoop := service.NewTradingLoop(conf, marketService, tradingAccountService, positionService, promptService, agentService, orderRepo, logger)
+	agentService := service.NewAgentService(logger, db, client, exchange, positionService, adminConfigService, conf)
+	tradingLoop := service.NewTradingLoop(marketService, tradingAccountService, positionService, promptService, agentService, adminConfigService, orderRepo, logger)
 	tradingHandler := handler.NewTradingHandler(tradingLoop, tradingAccountService, positionService, agentService, logger)
+	adminHandler := handler.NewAdminHandler(logger, adminConfigService)
+	string2 := provideJWTSecret(conf)
+	authService := service.NewAuthService(logger, db, string2)
+	authHandler := handler.NewAuthHandler(logger, authService)
+	setupHandler := handler.NewSetupHandler(logger, authService)
 	telegram := provideTelegram(logger, conf)
 	appComponents := &AppComponents{
 		TradingHandler:        tradingHandler,
+		AdminHandler:          adminHandler,
+		AuthHandler:           authHandler,
+		SetupHandler:          setupHandler,
 		TradingLoop:           tradingLoop,
 		MarketService:         marketService,
 		TradingAccountService: tradingAccountService,
 		PositionService:       positionService,
 		AgentService:          agentService,
+		AuthService:           authService,
+		AdminConfigService:    adminConfigService,
 		tg:                    telegram,
 	}
 	return appComponents, nil
@@ -63,12 +74,12 @@ const (
 )
 
 var (
-	handlerSet = wire.NewSet(handler.NewTradingHandler)
+	handlerSet = wire.NewSet(handler.NewTradingHandler, handler.NewAdminHandler, handler.NewAuthHandler, handler.NewSetupHandler)
 
 	tradingSet = wire.NewSet(
 		provideBinanceClient,
 		provideExchange,
-		provideOpenAIClient, repo.NewTradeRepo, repo.NewOrderRepo, service.NewIndicatorService, service.NewMarketService, service.NewTradingAccountService, service.NewPositionService, service.NewPromptService, service.NewAgentService, service.NewTradingLoop,
+		provideOpenAIClient, repo.NewTradeRepo, repo.NewOrderRepo, repo.NewTradingConfigRepo, repo.NewSystemPromptRepo, repo.NewAdminUserRepo, service.NewIndicatorService, service.NewMarketService, service.NewTradingAccountService, service.NewPositionService, service.NewPromptService, service.NewAgentService, service.NewTradingLoop, service.NewAdminConfigService, service.NewAuthService, provideJWTSecret,
 	)
 )
 
@@ -148,4 +159,13 @@ func provideOpenAIClient(conf *config.Config, logger *zap.Logger) *openai.Client
 
 	logger.Info("OpenAI client initialized", zap.String(logFieldConfiguredModel, conf.LLM.Model), zap.String("provider", openaiProviderName))
 	return &client
+}
+
+// provideJWTSecret provides JWT secret from configuration
+func provideJWTSecret(conf *config.Config) string {
+	return conf.Admin.JWTSecret
+}
+
+func provideModel(conf *config.Config) string {
+	return conf.LLM.Model
 }

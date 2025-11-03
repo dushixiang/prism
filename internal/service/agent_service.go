@@ -32,34 +32,35 @@ type AgentService struct {
 	*repo.LLMLogRepo
 	*repo.OrderRepo
 
-	openAIClient    *openai.Client
-	exchange        exchange.Exchange
-	positionService *PositionService
-	tradingConf     config.TradingConf
-	model           string
+	openAIClient       *openai.Client
+	exchange           exchange.Exchange
+	positionService    *PositionService
+	adminConfigService *AdminConfigService
+	model              string
 }
 
 // NewAgentService 创建AI Agent服务
 func NewAgentService(
+	logger *zap.Logger,
 	db *gorm.DB,
 	openAIClient *openai.Client,
 	exchange exchange.Exchange,
 	positionService *PositionService,
-	logger *zap.Logger,
-	conf *config.Config,
+	adminConfigService *AdminConfigService,
+	config *config.Config,
 ) *AgentService {
 	return &AgentService{
-		logger:          logger,
-		Service:         orz.NewService(db),
-		TradeRepo:       repo.NewTradeRepo(db),
-		DecisionRepo:    repo.NewDecisionRepo(db),
-		LLMLogRepo:      repo.NewLLMLogRepo(db),
-		OrderRepo:       repo.NewOrderRepo(db),
-		openAIClient:    openAIClient,
-		exchange:        exchange,
-		positionService: positionService,
-		tradingConf:     conf.Trading,
-		model:           conf.LLM.Model,
+		logger:             logger,
+		Service:            orz.NewService(db),
+		TradeRepo:          repo.NewTradeRepo(db),
+		DecisionRepo:       repo.NewDecisionRepo(db),
+		LLMLogRepo:         repo.NewLLMLogRepo(db),
+		OrderRepo:          repo.NewOrderRepo(db),
+		openAIClient:       openAIClient,
+		exchange:           exchange,
+		positionService:    positionService,
+		adminConfigService: adminConfigService,
+		model:              config.LLM.Model,
 	}
 }
 
@@ -306,11 +307,8 @@ func (s *AgentService) buildDecisionText(rounds []DecisionRound, finalText strin
 	var sections []string
 
 	// 按顺序输出每一轮的思考和操作
-	for i, round := range rounds {
+	for _, round := range rounds {
 		var roundContent strings.Builder
-
-		// 先写轮次标题
-		roundContent.WriteString(fmt.Sprintf("【第%d轮】\n", i+1))
 
 		// 本轮的思考
 		if round.Reasoning != "" {
@@ -334,13 +332,10 @@ func (s *AgentService) buildDecisionText(rounds []DecisionRound, finalText strin
 	// 最终总结
 	if finalText != "" {
 		sections = append(sections, "【决策总结】\n"+finalText)
-	} else if len(rounds) > 0 {
-		// 如果没有最终总结但有操作，生成简要说明
-		sections = append(sections, "【决策总结】\n已完成上述操作")
 	}
 
 	if len(sections) == 0 {
-		return "无操作"
+		return "-"
 	}
 
 	return strings.Join(sections, "\n\n")
@@ -809,8 +804,12 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 }
 
 func (s *AgentService) leverageBounds() (int, int) {
-	minLeverage := s.tradingConf.MinLeverage
-	maxLeverage := s.tradingConf.MaxLeverage
+	tradingConfig, err := s.adminConfigService.GetTradingConfig(context.Background())
+	if err != nil {
+		s.logger.Error("failed to get trading config", zap.Error(err))
+	}
+	minLeverage := tradingConfig.MinLeverage
+	maxLeverage := tradingConfig.MaxLeverage
 
 	if minLeverage <= 0 {
 		minLeverage = 1
@@ -1245,49 +1244,13 @@ func (s *AgentService) GetTradeStats(ctx context.Context) (*repo.TradeStats, err
 	return s.TradeRepo.GetTradeStats(ctx)
 }
 
-// GetRecentLLMLogs 获取最近的LLM日志
-func (s *AgentService) GetRecentLLMLogs(ctx context.Context, limit int) ([]*models.LLMLog, error) {
-	logs, err := s.LLMLogRepo.FindRecentLogs(ctx, limit)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]*models.LLMLog, len(logs))
-	for i := range logs {
-		result[i] = &logs[i]
-	}
-
-	return result, nil
-}
-
-// GetLLMLogsByIteration 根据迭代次数获取LLM日志
-func (s *AgentService) GetLLMLogsByIteration(ctx context.Context, iteration int) ([]*models.LLMLog, error) {
-	logs, err := s.LLMLogRepo.FindByIteration(ctx, iteration)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]*models.LLMLog, len(logs))
-	for i := range logs {
-		result[i] = &logs[i]
-	}
-
-	return result, nil
-}
-
 // GetLLMLogsByDecisionID 根据决策ID获取LLM日志
-func (s *AgentService) GetLLMLogsByDecisionID(ctx context.Context, decisionID string) ([]*models.LLMLog, error) {
+func (s *AgentService) GetLLMLogsByDecisionID(ctx context.Context, decisionID string) ([]models.LLMLog, error) {
 	logs, err := s.LLMLogRepo.FindByDecisionID(ctx, decisionID)
 	if err != nil {
 		return nil, err
 	}
-
-	result := make([]*models.LLMLog, len(logs))
-	for i := range logs {
-		result[i] = &logs[i]
-	}
-
-	return result, nil
+	return logs, nil
 }
 
 // MarshalJSON 用于调试

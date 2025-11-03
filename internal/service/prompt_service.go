@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dushixiang/prism/internal/config"
 	"github.com/dushixiang/prism/internal/models"
 	"github.com/dushixiang/prism/internal/repo"
 	"github.com/valyala/fasttemplate"
@@ -16,20 +15,17 @@ import (
 
 // PromptService AI提示词生成服务
 type PromptService struct {
-	config    *config.Config
-	tradeRepo *repo.TradeRepo
-	orderRepo *repo.OrderRepo
+	tradeRepo          *repo.TradeRepo
+	orderRepo          *repo.OrderRepo
+	adminConfigService *AdminConfigService
 }
 
-//go:embed templates/system_instructions.txt
-var systemInstructionsTemplate string
-
 // NewPromptService 创建提示词服务
-func NewPromptService(conf *config.Config, tradeRepo *repo.TradeRepo, orderRepo *repo.OrderRepo) *PromptService {
+func NewPromptService(tradeRepo *repo.TradeRepo, orderRepo *repo.OrderRepo, adminConfigService *AdminConfigService) *PromptService {
 	return &PromptService{
-		config:    conf,
-		tradeRepo: tradeRepo,
-		orderRepo: orderRepo,
+		tradeRepo:          tradeRepo,
+		orderRepo:          orderRepo,
+		adminConfigService: adminConfigService,
 	}
 }
 
@@ -50,15 +46,22 @@ func (s *PromptService) GeneratePrompt(ctx context.Context, data *PromptData) st
 		return ""
 	}
 
+	// 第一步: 获取交易配置
+	tradingConfig, err := s.adminConfigService.GetTradingConfig(ctx)
+	if err != nil {
+		// 如果获取失败，使用默认值
+		tradingConfig = &DefaultTradingConfig
+	}
+
 	var sb strings.Builder
 
 	s.writeConversationContext(&sb, data)
 
 	s.writeMarketOverview(&sb, data.MarketDataMap)
 
-	s.writeAccountInfo(&sb, data.AccountMetrics)
+	s.writeAccountInfo(&sb, data.AccountMetrics, tradingConfig)
 
-	s.writePositionInfo(&sb, data.Positions, data.AccountMetrics)
+	s.writePositionInfo(&sb, data.Positions, data.AccountMetrics, tradingConfig)
 
 	s.writeActiveOrders(&sb, data.ActiveOrders, data.Positions, data.MarketDataMap)
 
@@ -118,21 +121,14 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 		pricePrecision := getPricePrecision(data.CurrentPrice)
 		priceFormat := fmt.Sprintf("%%.%df", pricePrecision)
 
-		// 获取15m指标判断短期状态
-		var shortTermStatus string
-		if ind15m, ok := data.Timeframes["15m"]; ok {
-			if ind15m.RSI14 > 70 {
-				shortTermStatus = " [超买]"
-			} else if ind15m.RSI14 < 30 {
-				shortTermStatus = " [超卖]"
-			}
-		}
+		sb.WriteString(fmt.Sprintf("### %s\n", symbol))
 
-		sb.WriteString(fmt.Sprintf("### %s %s\n",
-			symbol, shortTermStatus))
-
-		sb.WriteString(fmt.Sprintf("💰 $"+priceFormat+" | 📊 资金费率 %.4f%%\n\n",
+		sb.WriteString(fmt.Sprintf("💰 $"+priceFormat+" | 📊 资金费率 %.4f%%\n",
 			data.CurrentPrice, data.FundingRate*100))
+		if data.RecentHigh > 0 && data.RecentLow > 0 {
+			sb.WriteString(fmt.Sprintf("**24h高低点**: $"+priceFormat+" / $"+priceFormat+"\n", data.RecentHigh, data.RecentLow))
+		}
+		sb.WriteString("\n")
 
 		// 多时间框架指标（紧凑格式）
 		sb.WriteString("**多周期指标**\n")
@@ -156,63 +152,38 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 				var emaDeviationStr string
 				if ind.EMA20 > 0 {
 					emaDeviation = (ind.Price - ind.EMA20) / ind.EMA20 * 100
-					if emaDeviation > 2.0 {
-						emaDeviationStr = fmt.Sprintf(" 🔴偏离EMA20 %+.2f%%", emaDeviation)
-					} else if emaDeviation < -2.0 {
-						emaDeviationStr = fmt.Sprintf(" 🔵偏离EMA20 %+.2f%%", emaDeviation)
-					} else {
-						emaDeviationStr = fmt.Sprintf(" 偏离EMA20 %+.2f%%", emaDeviation)
-					}
+					emaDeviationStr = fmt.Sprintf(" 偏离EMA20 %+.2f%%", emaDeviation)
 				}
 
-				// ⭐ 关键信号标注（建议3）
-				var signals []string
-
-				// RSI 信号
-				if ind.RSI14 > 70 {
-					signals = append(signals, "RSI超买")
-				} else if ind.RSI14 < 30 {
-					signals = append(signals, "RSI超卖")
-				}
-
-				// MACD 信号
-				if ind.MACD > 0 && ind.MACDSignal > 0 && ind.MACD > ind.MACDSignal {
-					signals = append(signals, "MACD金叉")
-				} else if ind.MACD < 0 && ind.MACDSignal < 0 && ind.MACD < ind.MACDSignal {
-					signals = append(signals, "MACD死叉")
-				}
-
-				// 成交量异常
-				if ind.Volume > ind.AvgVolume*2 {
-					signals = append(signals, "放量")
-				} else if ind.Volume < ind.AvgVolume*0.5 {
-					signals = append(signals, "缩量")
-				}
-
-				signalStr := ""
-				if len(signals) > 0 {
-					signalStr = " ⚡[" + strings.Join(signals, ",") + "]"
+				// 计算成交量比率（客观数据）
+				var volumeRatioStr string
+				if ind.AvgVolume > 0 {
+					volumeRatio := ind.Volume / ind.AvgVolume
+					volumeRatioStr = fmt.Sprintf(" (%.2fx均值)", volumeRatio)
 				}
 
 				// 使用新的多行格式
 				sb.WriteString(fmt.Sprintf("- %s:\n", tf))
 				sb.WriteString(fmt.Sprintf("  - 价格: $"+priceFormat+"%s\n", ind.Price, emaDeviationStr))
 				sb.WriteString(fmt.Sprintf("  - 均线: EMA20=$"+priceFormat+" / EMA50=$"+priceFormat+"\n", ind.EMA20, ind.EMA50))
+				sb.WriteString(fmt.Sprintf("  - 布林带: U=$"+priceFormat+" M=$"+priceFormat+" L=$"+priceFormat+"\n", ind.BBandsUpper, ind.BBandsMiddle, ind.BBandsLower))
 
 				formatStr := fmt.Sprintf("  - 指标: MACD=%%.%df | RSI14=%%.1f | ATR14=%%.%df\n", macdPrecision, atrPrecision)
 				sb.WriteString(fmt.Sprintf(formatStr, ind.MACD, ind.RSI14, ind.ATR14))
 
 				sb.WriteString(fmt.Sprintf("  - 成交量: %s (均值: %s)%s\n",
-					formatVolume(ind.Volume), formatVolume(ind.AvgVolume), signalStr))
+					formatVolume(ind.Volume), formatVolume(ind.AvgVolume), volumeRatioStr))
 			}
 		}
 		sb.WriteString("\n")
 
 		// 价格走势概览 - 只显示收盘价趋势
+		// 注意：IntradaySeries 使用15分钟K线（在 market_service.go 中定义）
 		if data.IntradaySeries != nil && len(data.IntradaySeries.ClosePrices) > 0 {
 			closes := data.IntradaySeries.ClosePrices
 			count := len(closes)
-			hours := float64(count) * 15.0 / 60.0
+			const intradayIntervalMinutes = 15.0 // 15分钟K线
+			hours := float64(count) * intradayIntervalMinutes / 60.0
 
 			// 计算最近6小时的价格变化
 			if count > 0 {
@@ -237,7 +208,7 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 				sb.WriteString(fmt.Sprintf("起 "+priceFormat+" → 终 "+priceFormat+" (%+.2f%%) | 区间 ["+priceFormat+"-"+priceFormat+"] 波幅%.2f%%\n",
 					startPrice, endPrice, priceChange, lowPrice, highPrice, volatility))
 
-				// 只显示最近8根K线的收盘价（约2小时），用于观察短期趋势
+				// 只显示最近16根K线的收盘价（约4小时），用于观察短期趋势
 				recentCount := 16
 				if count < recentCount {
 					recentCount = count
@@ -253,46 +224,32 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 		if data.LongerTermData != nil {
 			sb.WriteString("**1小时趋势**\n")
 
-			// ⭐ 趋势状态判断 (基于 ADX 的新逻辑)
-			var trendStatus string
-			var trendStrength string // 趋势强度级别
+			// 1小时均线结构（客观描述）
+			var trendDesc string
 			if ind1h, ok := data.Timeframes["1h"]; ok && ind1h.Price > 0 {
 				strength := (ind1h.EMA20 - ind1h.EMA50) / ind1h.Price * 100
 				adx := ind1h.ADX14
 
-				// ⭐ 核心逻辑：ADX 决定是否有趋势，EMA 决定趋势方向
-				if adx < 25 {
-					// ADX < 25: 无论 EMA 如何，都视为震荡
-					trendStatus = "震荡盘整"
-					trendStrength = "无趋势"
-				} else if adx >= 25 && adx < 40 {
-					// ADX 25-40: 常规趋势
-					if strength > 0 {
-						trendStatus = "上涨趋势"
-					} else {
-						trendStatus = "下跌趋势"
-					}
-					trendStrength = "常规趋势"
+				// 均线位置关系（客观描述）
+				var emaRelation string
+				if strength > 0.05 { // 增加一个小的阈值避免过于频繁的波动
+					emaRelation = "EMA20 在 EMA50 上方"
+				} else if strength < -0.05 {
+					emaRelation = "EMA20 在 EMA50 下方"
 				} else {
-					// ADX >= 40: 强劲趋势
-					if strength > 0 {
-						trendStatus = "上涨趋势"
-					} else {
-						trendStatus = "下跌趋势"
-					}
-					trendStrength = "强劲趋势"
+					emaRelation = "EMA20 与 EMA50 接近"
 				}
 
-				sb.WriteString(fmt.Sprintf("- **趋势状态**: **%s** | **趋势强度**: **%s** (ADX=%.1f)\n", trendStatus, trendStrength, adx))
+				trendDesc = fmt.Sprintf("- **1h 均线关系**: %s | **ADX14**: %.1f", emaRelation, adx)
+				sb.WriteString(trendDesc + "\n")
 				sb.WriteString(fmt.Sprintf("- **均线偏离度**: %.2f%% (EMA20 vs EMA50)\n", strength))
 			}
 
-			// 中文化状态
-			emaStatus := translateStatus(data.LongerTermData.EMA20vsEMA50, "均线", "之上", "之下", "持平")
-			atrStatus := translateStatus(data.LongerTermData.ATR3vsATR14, "短期波动", "加剧", "减弱", "稳定")
-			volStatus := translateStatus(data.LongerTermData.VolumeVsAvg, "成交量", "放大", "萎缩", "相同")
+			// 波动率和成交量状态（客观描述）
+			atrStatus := translateStatus(data.LongerTermData.ATR3vsATR14, "ATR3 vs ATR14", "高于", "低于", "等于")
+			volStatus := translateStatus(data.LongerTermData.VolumeVsAvg, "当前成交量 vs 均值", "高于", "低于", "等于")
 
-			sb.WriteString(fmt.Sprintf("- 细节: %s | %s | %s\n", emaStatus, atrStatus, volStatus))
+			sb.WriteString(fmt.Sprintf("- 波动与成交量: %s | %s\n", atrStatus, volStatus))
 
 			// 1小时序列数据（最近10点）
 			if len(data.LongerTermData.MACDSeries) > 0 || len(data.LongerTermData.RSI14Series) > 0 {
@@ -309,7 +266,7 @@ func (s *PromptService) writeMarketOverview(sb *strings.Builder, marketDataMap m
 }
 
 // writeAccountInfo 写入账户信息
-func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMetrics) {
+func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMetrics, tradingConfig *models.TradingConfig) {
 	sb.WriteString("## 账户状态\n\n")
 
 	if metrics == nil {
@@ -322,7 +279,6 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 		availablePercent = (metrics.Available / metrics.TotalBalance) * 100
 	}
 
-	tc := s.config.Trading
 	formatPercent := func(val float64) string {
 		str := fmt.Sprintf("%.2f", val)
 		str = strings.TrimRight(str, "0")
@@ -333,8 +289,8 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 		return str
 	}
 
-	drawdownWarn := tc.MaxDrawdownPercent
-	forcedFlat := tc.MaxDrawdownPercent + 5
+	drawdownWarn := tradingConfig.MaxDrawdownPercent
+	forcedFlat := tradingConfig.MaxDrawdownPercent + 5
 
 	// 资金情况
 	sb.WriteString(fmt.Sprintf("**资金**: 净值 $%.2f (初始$%.2f, 峰值$%.2f) | 可用 $%.2f (%.1f%%)\n",
@@ -359,10 +315,10 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 	riskNote := ""
 	if forcedFlat > 0 && metrics.DrawdownFromPeak >= forcedFlat {
 		drawdownEmoji = "🔴"
-		riskNote = fmt.Sprintf(" | 已触发强制清仓阈值%s%%，需立即执行全平", formatPercent(forcedFlat))
+		riskNote = fmt.Sprintf(" | 已达到强制清仓阈值%s%%（系统规则）", formatPercent(forcedFlat))
 	} else if drawdownWarn > 0 && metrics.DrawdownFromPeak >= drawdownWarn {
 		drawdownEmoji = "⚠️"
-		riskNote = fmt.Sprintf(" | 回撤达到警戒线%s%%，请暂停新开仓并复盘风控", formatPercent(drawdownWarn))
+		riskNote = fmt.Sprintf(" | 已达到警戒线%s%%（系统规则）", formatPercent(drawdownWarn))
 	}
 
 	sharpeEmoji := "📊"
@@ -386,8 +342,8 @@ func (s *PromptService) writeAccountInfo(sb *strings.Builder, metrics *AccountMe
 }
 
 // writePositionInfo 写入持仓信息
-func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []models.Position, metrics *AccountMetrics) {
-	maxPositions := s.config.Trading.MaxPositions
+func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []models.Position, metrics *AccountMetrics, tradingConfig *models.TradingConfig) {
+	maxPositions := tradingConfig.MaxPositions
 	currentCount := len(positions)
 
 	sb.WriteString("## 当前持仓\n\n")
@@ -408,8 +364,38 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []model
 			priceFormat := fmt.Sprintf("%%.%df", pricePrecision)
 
 			sb.WriteString(fmt.Sprintf("### %d. %s %s\n", i+1, pos.Symbol, strings.ToUpper(pos.Side)))
-			sb.WriteString(fmt.Sprintf("入场$"+priceFormat+" → 当前$"+priceFormat+" | 盈亏$%+.2f (%+.2f%%) | %dx杠杆 | 持仓时间 %s\n\n",
-				pos.EntryPrice, pos.CurrentPrice, pos.UnrealizedPnl, pnlPercent, pos.Leverage, holding))
+
+			// 基本信息
+			sb.WriteString(fmt.Sprintf("- 价格: 入场$"+priceFormat+" → 当前$"+priceFormat+"\n",
+				pos.EntryPrice, pos.CurrentPrice))
+			sb.WriteString(fmt.Sprintf("- 盈亏: $%+.2f (%+.2f%%)", pos.UnrealizedPnl, pnlPercent))
+
+			// 显示历史峰值盈亏（如果有）
+			if pos.PeakPnlPercent != 0 {
+				sb.WriteString(fmt.Sprintf(" | 峰值盈亏 %+.2f%%", pos.PeakPnlPercent))
+			}
+			sb.WriteString("\n")
+
+			// 杠杆和保证金
+			sb.WriteString(fmt.Sprintf("- 杠杆: %dx | 保证金: $%.2f | 数量: %.4f\n",
+				pos.Leverage, pos.Margin, pos.Quantity))
+
+			// 强平价格和风险度
+			if pos.LiquidationPrice > 0 {
+				liquidationDistance := 0.0
+				if pos.CurrentPrice > 0 {
+					if pos.Side == "long" {
+						liquidationDistance = (pos.LiquidationPrice - pos.CurrentPrice) / pos.CurrentPrice * 100
+					} else {
+						liquidationDistance = (pos.CurrentPrice - pos.LiquidationPrice) / pos.CurrentPrice * 100
+					}
+				}
+				sb.WriteString(fmt.Sprintf("- 强平价格: $"+priceFormat+" (距当前价格 %+.2f%%)\n",
+					pos.LiquidationPrice, liquidationDistance))
+			}
+
+			// 持仓时间
+			sb.WriteString(fmt.Sprintf("- 持仓时间: %s\n\n", holding))
 
 			// 开仓理由和退出计划
 			if strings.TrimSpace(pos.EntryReason) != "" {
@@ -423,23 +409,13 @@ func (s *PromptService) writePositionInfo(sb *strings.Builder, positions []model
 		}
 	}
 
-	// 如果还有剩余仓位，计算建议的资金分配
+	// 仓位容量信息
 	remainingSlots := maxPositions - currentCount
 	if remainingSlots > 0 && metrics != nil && metrics.Available > 0 {
-		sb.WriteString("## 新开仓建议\n\n")
+		sb.WriteString("## 仓位容量\n\n")
 
-		sb.WriteString(fmt.Sprintf("**剩余可开仓位**: %d个\n", remainingSlots))
-		sb.WriteString(fmt.Sprintf("**总可用余额**: $%.2f\n", metrics.Available))
-
-		referenceDenom := currentCount + remainingSlots
-		referenceMargin := 0.0
-		if referenceDenom > 0 {
-			referenceMargin = metrics.Available / float64(referenceDenom)
-		}
-
-		sb.WriteString(fmt.Sprintf("**单仓参考额度**: $%.2f ≈ 可用余额 / (%d持仓 + %d剩余) (仅供参考)\n",
-			referenceMargin, currentCount, remainingSlots))
-		sb.WriteString("**仓位规划**：请遵循系统指令中的“仓位管理”原则进行决策。\n\n")
+		sb.WriteString(fmt.Sprintf("**剩余可开仓位**: %d个（最大%d个）\n", remainingSlots, maxPositions))
+		sb.WriteString(fmt.Sprintf("**当前可用余额**: $%.2f\n", metrics.Available))
 	}
 }
 
@@ -675,8 +651,18 @@ func formatPriceArray(arr []float64) string {
 }
 
 // GetSystemInstructions 获取系统指令
-func (s *PromptService) GetSystemInstructions() string {
-	tc := s.config.Trading
+func (s *PromptService) GetSystemInstructions(ctx context.Context) (string, error) {
+	// 获取系统提示词
+	prompt, err := s.adminConfigService.GetSystemPrompt(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get system prompt: %w", err)
+	}
+
+	// 获取交易配置
+	tradingConfig, err := s.adminConfigService.GetTradingConfig(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get trading config: %w", err)
+	}
 
 	formatFloat := func(val float64) string {
 		str := fmt.Sprintf("%.2f", val)
@@ -689,13 +675,13 @@ func (s *PromptService) GetSystemInstructions() string {
 	}
 
 	replacements := map[string]interface{}{
-		"max_drawdown_percent": formatFloat(tc.MaxDrawdownPercent),
-		"forced_flat_percent":  formatFloat(tc.MaxDrawdownPercent + 5),
-		"max_positions":        fmt.Sprintf("%d", tc.MaxPositions),
-		"min_leverage":         fmt.Sprintf("%d", tc.MinLeverage),
-		"max_leverage":         fmt.Sprintf("%d", tc.MaxLeverage),
+		"max_drawdown_percent": formatFloat(tradingConfig.MaxDrawdownPercent),
+		"forced_flat_percent":  formatFloat(tradingConfig.MaxDrawdownPercent + 5),
+		"max_positions":        fmt.Sprintf("%d", tradingConfig.MaxPositions),
+		"min_leverage":         fmt.Sprintf("%d", tradingConfig.MinLeverage),
+		"max_leverage":         fmt.Sprintf("%d", tradingConfig.MaxLeverage),
 	}
 
-	tmpl := fasttemplate.New(systemInstructionsTemplate, "{{", "}}")
-	return tmpl.ExecuteString(replacements)
+	tmpl := fasttemplate.New(prompt.Content, "{{", "}}")
+	return tmpl.ExecuteString(replacements), nil
 }

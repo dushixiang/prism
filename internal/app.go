@@ -9,6 +9,7 @@ import (
 
 	"github.com/dushixiang/prism/internal/config"
 	"github.com/dushixiang/prism/internal/handler"
+	authmw "github.com/dushixiang/prism/internal/middleware"
 	"github.com/dushixiang/prism/internal/models"
 	"github.com/dushixiang/prism/internal/service"
 	"github.com/dushixiang/prism/internal/telegram"
@@ -46,6 +47,9 @@ var _ orz.Application = (*PrismApp)(nil)
 
 type AppComponents struct {
 	TradingHandler *handler.TradingHandler
+	AdminHandler   *handler.AdminHandler
+	AuthHandler    *handler.AuthHandler
+	SetupHandler   *handler.SetupHandler
 
 	// Trading system services
 	TradingLoop           *service.TradingLoop
@@ -53,6 +57,8 @@ type AppComponents struct {
 	TradingAccountService *service.TradingAccountService
 	PositionService       *service.PositionService
 	AgentService          *service.AgentService
+	AuthService           *service.AuthService
+	AdminConfigService    *service.AdminConfigService
 
 	tg *telegram.Telegram
 }
@@ -88,6 +94,8 @@ func (r *PrismApp) Configure(app *orz.App) error {
 	if err := db.AutoMigrate(
 		// Trading system models
 		models.AccountHistory{}, models.Position{}, models.Trade{}, models.Decision{}, models.LLMLog{}, models.Order{},
+		// Admin models
+		models.TradingConfig{}, models.AdminUser{}, models.SystemPrompt{},
 	); err != nil {
 		logger.Fatal("database auto migrate failed", zap.Error(err))
 	}
@@ -137,9 +145,63 @@ func (r *PrismApp) Configure(app *orz.App) error {
 
 	api := e.Group("/api")
 	{
-		// Trading API routes
+		// Setup API routes (首次设置，无需认证)
+		if r.components.SetupHandler != nil {
+			r.components.SetupHandler.RegisterRoutes(api)
+		}
+
+		// Trading API routes (无需认证)
 		if r.components.TradingHandler != nil {
 			r.components.TradingHandler.RegisterRoutes(api)
+		}
+
+		// Auth API routes (登录等公开接口)
+		if r.components.AuthHandler != nil {
+			r.components.AuthHandler.RegisterRoutes(api)
+
+			// 需要JWT认证的auth接口
+			if r.components.AuthService != nil {
+				jwtMiddleware := authmw.JWTAuth(authmw.JWTAuthConfig{
+					AuthService: r.components.AuthService,
+					Logger:      logger,
+				})
+				authProtected := api.Group("/auth", jwtMiddleware)
+				r.components.AuthHandler.RegisterProtectedRoutes(authProtected)
+			}
+		}
+
+		// Admin API routes (支持两种认证方式)
+		if r.components.AdminHandler != nil {
+			// JWT认证（用于前端页面）
+			var jwtMiddleware echo.MiddlewareFunc
+			if r.components.AuthService != nil {
+				jwtMiddleware = authmw.JWTAuth(authmw.JWTAuthConfig{
+					AuthService: r.components.AuthService,
+					Logger:      logger,
+				})
+			}
+
+			// 创建支持两种认证方式的中间件
+			dualAuthMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
+				return func(c echo.Context) error {
+					// 先尝试JWT认证
+					authHeader := c.Request().Header.Get("Authorization")
+					if authHeader != "" && jwtMiddleware != nil {
+						return jwtMiddleware(next)(c)
+					}
+
+					// 都没有，返回401
+					return c.JSON(http.StatusUnauthorized, map[string]interface{}{
+						"error": "需要认证：请提供JWT Token或API Key",
+					})
+				}
+			}
+
+			// 为admin路由组应用双重认证中间件
+			adminGroup := api.Group("/admin", dualAuthMiddleware)
+
+			// 注册admin路由到带认证的组
+			r.components.AdminHandler.RegisterRoutesWithGroup(adminGroup)
 		}
 	}
 
@@ -158,6 +220,15 @@ func (r *PrismApp) Init(logger *zap.Logger) error {
 
 	if components.TradingLoop == nil {
 		return fmt.Errorf("trading loop not available, please check Binance and LLM API configuration")
+	}
+
+	if components.AdminConfigService != nil {
+		components.AdminConfigService.Initialize(context.Background())
+		// 设置 TradingLoop 引用，用于配置更新后的自动重启
+		if components.TradingLoop != nil {
+			components.AdminConfigService.SetTradingLoop(components.TradingLoop)
+			logger.Info("TradingLoop reference set to AdminConfigService")
+		}
 	}
 
 	// 启动持仓同步worker（每3秒同步一次，保证数据实时性）

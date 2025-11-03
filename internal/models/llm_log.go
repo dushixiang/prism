@@ -13,7 +13,7 @@ type LLMLog struct {
 	Iteration        int            `gorm:"type:int;not null;index" json:"iteration"`  // 决策迭代次数
 	RoundNumber      int            `gorm:"type:int;not null" json:"round_number"`     // 本次决策的轮次（工具调用轮次）
 	Model            string         `gorm:"type:varchar(50)" json:"model"`             // 使用的AI模型
-	SystemPrompt     string         `gorm:"type:text" json:"system_prompt"`            // 系统提示词
+	SystemPrompt     string         `gorm:"type:text" json:"-"`                        // 系统提示词(前端隐藏)
 	UserPrompt       string         `gorm:"type:text" json:"user_prompt"`              // 用户提示词
 	Messages         string         `gorm:"type:text" json:"messages"`                 // 完整的消息历史（JSON格式）
 	AssistantContent string         `gorm:"type:text" json:"assistant_content"`        // AI返回的内容

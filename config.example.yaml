@@ -31,9 +31,6 @@ app:
     enabled: false  # 是否启用真实交易。false时使用纸钱包模式（模拟交易，不实际下单）。
     paper_wallet:
       initial_balance: 1000.0  # 纸钱包模式的初始余额（USDT）
-    symbols: [ "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT" ]  # 策略关注的交易对列表。
-    interval_minutes: 15  # 策略重新评估与下单的最小时间间隔（分钟）。
-    max_drawdown_percent: 15  # 账户回撤的参考上限（模型需自行遵守）。
-    max_positions: 5  # 同时持有的最大仓位数量。
-    max_leverage: 15  # 建仓使用的最高杠杆倍数。
-    min_leverage: 3  # 建仓使用的最低杠杆倍数。
+  admin:
+    # 管理后台API认证配置
+    jwt_secret: "your-jwt-secret-change-me-at-least-32-chars"  # JWT密钥（用于前端登录认证），请务必修改为至少32位的强密码，使用 UUID 生成一个即可

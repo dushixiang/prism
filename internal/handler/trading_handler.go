@@ -44,7 +44,10 @@ func (h *TradingHandler) GetStatus(c echo.Context) error {
 	ctx := c.Request().Context()
 
 	// 获取交易循环状态
-	loopStatus := h.tradingLoop.GetStatus()
+	loopStatus, err := h.tradingLoop.GetStatus(ctx)
+	if err != nil {
+		return err
+	}
 
 	// 获取账户信息
 	accountMetrics, err := h.accountService.GetAccountMetrics(ctx)
@@ -279,7 +282,6 @@ func (h *TradingHandler) Start(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message": "trading loop started",
-		"status":  h.tradingLoop.GetStatus(),
 	})
 }
 
@@ -304,6 +306,37 @@ func (h *TradingHandler) Stop(c echo.Context) error {
 	})
 }
 
+// Restart 重启交易循环
+// POST /api/trading/restart
+func (h *TradingHandler) Restart(c echo.Context) error {
+	wasRunning := h.tradingLoop.IsRunning()
+
+	// 如果正在运行，先停止
+	if wasRunning {
+		h.tradingLoop.Stop()
+		if h.loopCancel != nil {
+			h.loopCancel()
+		}
+		h.logger.Info("trading loop stopped for restart")
+	}
+
+	// 创建新的context
+	h.loopCtx, h.loopCancel = context.WithCancel(context.Background())
+
+	// 在goroutine中启动
+	go func() {
+		if err := h.tradingLoop.Start(h.loopCtx); err != nil {
+			h.logger.Error("trading loop error on restart", zap.Error(err))
+		}
+	}()
+
+	h.logger.Info("trading loop restarted via API")
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "trading loop restarted",
+	})
+}
+
 // GetLLMLogs 获取LLM通信日志
 // GET /api/trading/llm-logs?decision_id=xxx 或 ?limit=100&iteration=1
 func (h *TradingHandler) GetLLMLogs(c echo.Context) error {
@@ -311,31 +344,17 @@ func (h *TradingHandler) GetLLMLogs(c echo.Context) error {
 
 	// 获取查询参数
 	decisionID := c.QueryParam("decision_id")
-	limitStr := c.QueryParam("limit")
-	iterationStr := c.QueryParam("iteration")
-
-	// 默认限制100条
-	limit := 100
-	if limitStr != "" {
-		fmt.Sscanf(limitStr, "%d", &limit)
+	if decisionID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"error": "decision_id is required",
+		})
 	}
 
 	var logs interface{}
 	var err error
 
 	// 优先按决策ID查询
-	if decisionID != "" {
-		logs, err = h.agentService.GetLLMLogsByDecisionID(ctx, decisionID)
-	} else if iterationStr != "" {
-		// 如果指定了迭代次数，查询该迭代的所有日志
-		var iteration int
-		fmt.Sscanf(iterationStr, "%d", &iteration)
-		logs, err = h.agentService.GetLLMLogsByIteration(ctx, iteration)
-	} else {
-		// 否则查询最近的日志
-		logs, err = h.agentService.GetRecentLLMLogs(ctx, limit)
-	}
-
+	logs, err = h.agentService.GetLLMLogsByDecisionID(ctx, decisionID)
 	if err != nil {
 		h.logger.Error("failed to get LLM logs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
@@ -352,6 +371,7 @@ func (h *TradingHandler) GetLLMLogs(c echo.Context) error {
 func (h *TradingHandler) RegisterRoutes(g *echo.Group) {
 	trading := g.Group("/trading")
 
+	// 查询接口
 	trading.GET("/status", h.GetStatus)
 	trading.GET("/account", h.GetAccount)
 	trading.GET("/positions", h.GetPositions)
@@ -360,4 +380,9 @@ func (h *TradingHandler) RegisterRoutes(g *echo.Group) {
 	trading.GET("/stats", h.GetStats)
 	trading.GET("/equity-curve", h.GetEquityCurve)
 	trading.GET("/llm-logs", h.GetLLMLogs)
+
+	// 控制接口
+	trading.POST("/start", h.Start)
+	trading.POST("/stop", h.Stop)
+	trading.POST("/restart", h.Restart)
 }

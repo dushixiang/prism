@@ -58,7 +58,6 @@ export type LLMLog = {
     iteration: number;
     round_number: number;
     model: string;
-    system_prompt: string;
     user_prompt: string;
     messages: string;
     assistant_content: string;

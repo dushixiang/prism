@@ -15,20 +15,23 @@ func NewIndicatorService() *IndicatorService {
 
 // TimeframeIndicators 单个时间框架的指标
 type TimeframeIndicators struct {
-	Timeframe  string  `json:"timeframe"` // 5m/15m/30m/1h
-	Price      float64 `json:"price"`
-	EMA20      float64 `json:"ema20"`
-	EMA50      float64 `json:"ema50"`
-	MACD       float64 `json:"macd"`
-	MACDSignal float64 `json:"macd_signal"`
-	MACDHist   float64 `json:"macd_hist"`
-	RSI7       float64 `json:"rsi7"`
-	RSI14      float64 `json:"rsi14"`
-	ATR3       float64 `json:"atr3"`
-	ATR14      float64 `json:"atr14"`
-	ADX14      float64 `json:"adx14"` // ADX 平均趋向指标（14周期）
-	Volume     float64 `json:"volume"`
-	AvgVolume  float64 `json:"avg_volume"`
+	Timeframe    string  `json:"timeframe"` // 5m/15m/30m/1h
+	Price        float64 `json:"price"`
+	EMA20        float64 `json:"ema20"`
+	EMA50        float64 `json:"ema50"`
+	MACD         float64 `json:"macd"`
+	MACDSignal   float64 `json:"macd_signal"`
+	MACDHist     float64 `json:"macd_hist"`
+	RSI7         float64 `json:"rsi7"`
+	RSI14        float64 `json:"rsi14"`
+	ATR3         float64 `json:"atr3"`
+	ATR14        float64 `json:"atr14"`
+	ADX14        float64 `json:"adx14"` // ADX 平均趋向指标（14周期）
+	Volume       float64 `json:"volume"`
+	AvgVolume    float64 `json:"avg_volume"`
+	BBandsUpper  float64 `json:"bbands_upper"`  // 布林带上轨
+	BBandsMiddle float64 `json:"bbands_middle"` // 布林带中轨
+	BBandsLower  float64 `json:"bbands_lower"`  // 布林带下轨
 }
 
 // TimeSeriesData 时序数据（最近50个数据点，约12.5小时的15分钟K线）
@@ -80,6 +83,9 @@ func (s *IndicatorService) CalculateIndicators(klines []*exchange.Kline) *Timefr
 	// 计算ADX
 	adx14 := ta.ADX(highs, lows, closes, 14)
 
+	// 计算布林带
+	upper, middle, lower := ta.BBands(closes, 20, 2.0, 2.0, 0)
+
 	// 计算平均成交量
 	avgVolume := 0.0
 	for _, v := range volumes {
@@ -91,19 +97,22 @@ func (s *IndicatorService) CalculateIndicators(klines []*exchange.Kline) *Timefr
 	lastIdx := len(closes) - 1
 
 	return &TimeframeIndicators{
-		Price:      closes[lastIdx],
-		EMA20:      ta.Last(ema20, 0),
-		EMA50:      ta.Last(ema50, 0),
-		MACD:       ta.Last(macd, 0),
-		MACDSignal: ta.Last(signal, 0),
-		MACDHist:   ta.Last(hist, 0),
-		RSI7:       ta.Last(rsi7, 0),
-		RSI14:      ta.Last(rsi14, 0),
-		ATR3:       ta.Last(atr3, 0),
-		ATR14:      ta.Last(atr14, 0),
-		ADX14:      ta.Last(adx14, 0),
-		Volume:     volumes[lastIdx],
-		AvgVolume:  avgVolume,
+		Price:        closes[lastIdx],
+		EMA20:        ta.Last(ema20, 0),
+		EMA50:        ta.Last(ema50, 0),
+		MACD:         ta.Last(macd, 0),
+		MACDSignal:   ta.Last(signal, 0),
+		MACDHist:     ta.Last(hist, 0),
+		RSI7:         ta.Last(rsi7, 0),
+		RSI14:        ta.Last(rsi14, 0),
+		ATR3:         ta.Last(atr3, 0),
+		ATR14:        ta.Last(atr14, 0),
+		ADX14:        ta.Last(adx14, 0),
+		Volume:       volumes[lastIdx],
+		AvgVolume:    avgVolume,
+		BBandsUpper:  ta.Last(upper, 0),
+		BBandsMiddle: ta.Last(middle, 0),
+		BBandsLower:  ta.Last(lower, 0),
 	}
 }
 

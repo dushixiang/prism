@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dushixiang/prism/internal/config"
 	"github.com/dushixiang/prism/internal/repo"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
@@ -13,14 +12,14 @@ import (
 
 // TradingLoop 交易循环调度器
 type TradingLoop struct {
-	config          config.TradingConf
-	marketService   *MarketService
-	accountService  *TradingAccountService
-	positionService *PositionService
-	promptService   *PromptService
-	agentService    *AgentService
-	orderRepo       *repo.OrderRepo
-	logger          *zap.Logger
+	marketService      *MarketService
+	accountService     *TradingAccountService
+	positionService    *PositionService
+	promptService      *PromptService
+	agentService       *AgentService
+	orderRepo          *repo.OrderRepo
+	logger             *zap.Logger
+	adminConfigService *AdminConfigService
 
 	startTime time.Time
 	iteration int
@@ -33,28 +32,28 @@ type TradingLoop struct {
 
 // NewTradingLoop 创建交易循环
 func NewTradingLoop(
-	config *config.Config,
 	marketService *MarketService,
 	accountService *TradingAccountService,
 	positionService *PositionService,
 	promptService *PromptService,
 	agentService *AgentService,
+	adminConfigService *AdminConfigService,
 	orderRepo *repo.OrderRepo,
 	logger *zap.Logger,
 ) *TradingLoop {
 	return &TradingLoop{
-		config:          config.Trading,
-		marketService:   marketService,
-		accountService:  accountService,
-		positionService: positionService,
-		promptService:   promptService,
-		agentService:    agentService,
-		orderRepo:       orderRepo,
-		logger:          logger,
-		startTime:       time.Now(),
-		iteration:       0,
-		isRunning:       false,
-		stopChan:        make(chan struct{}),
+		marketService:      marketService,
+		accountService:     accountService,
+		positionService:    positionService,
+		promptService:      promptService,
+		agentService:       agentService,
+		adminConfigService: adminConfigService,
+		orderRepo:          orderRepo,
+		logger:             logger,
+		startTime:          time.Now(),
+		iteration:          0,
+		isRunning:          false,
+		stopChan:           make(chan struct{}),
 	}
 }
 
@@ -76,20 +75,25 @@ func (t *TradingLoop) Start(ctx context.Context) error {
 		t.logger.Info("resume iteration counter from history", zap.Int("iteration", t.iteration))
 	}
 
+	tradingConfig, err := t.adminConfigService.GetTradingConfig(ctx)
+	if err != nil {
+		t.logger.Warn("failed to get trading config", zap.Error(err))
+	}
+
 	// 生成 cron 表达式：每 N 分钟的整点执行
 	// 例如 interval=10: "*/10 * * * *" 表示每小时的 0, 10, 20, 30, 40, 50 分执行
-	cronExpr := fmt.Sprintf("*/%d * * * *", t.config.IntervalMinutes)
+	cronExpr := fmt.Sprintf("*/%d * * * *", tradingConfig.IntervalMinutes)
 
 	t.logger.Info("trading loop started",
-		zap.Strings("symbols", t.config.Symbols),
-		zap.Int("interval_minutes", t.config.IntervalMinutes),
+		zap.Strings("symbols", tradingConfig.Symbols),
+		zap.Int("interval_minutes", tradingConfig.IntervalMinutes),
 		zap.String("cron_expression", cronExpr))
 
 	// 创建 cron 调度器（使用秒级精度）
 	t.cron = cron.New()
 
 	// 添加定时任务
-	_, err := t.cron.AddFunc(cronExpr, func() {
+	_, err = t.cron.AddFunc(cronExpr, func() {
 		if err := t.ExecuteCycle(context.Background()); err != nil {
 			t.logger.Error("cycle execution failed", zap.Error(err))
 		}
@@ -144,13 +148,18 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 	t.iteration++
 	cycleStart := time.Now()
 
+	tradingConfig, err := t.adminConfigService.GetTradingConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get trading config: %w", err)
+	}
+
 	t.logger.Info("========== TRADING CYCLE START ==========",
 		zap.Int("iteration", t.iteration),
 		zap.Time("start_time", cycleStart))
 
 	// ========== Step 1: 收集市场数据 ==========
 	t.logger.Info("[STEP 1/6] Collecting market data...")
-	marketData, err := t.marketService.CollectAllSymbols(ctx, t.config.Symbols)
+	marketData, err := t.marketService.CollectAllSymbols(ctx, tradingConfig.Symbols)
 	if err != nil {
 		return fmt.Errorf("step 1 failed - collect market data: %w", err)
 	}
@@ -202,7 +211,10 @@ func (t *TradingLoop) ExecuteCycle(ctx context.Context) error {
 	}
 
 	prompt := t.promptService.GeneratePrompt(ctx, promptData)
-	systemInstructions := t.promptService.GetSystemInstructions()
+	systemInstructions, err := t.promptService.GetSystemInstructions(ctx)
+	if err != nil {
+		return fmt.Errorf("step 4 failed - get system instructions: %w", err)
+	}
 
 	t.logger.Info("[STEP 4/6] LLM prompt generated",
 		zap.Int("prompt_length", len(prompt)))
@@ -294,15 +306,19 @@ func (t *TradingLoop) IsRunning() bool {
 }
 
 // GetStatus 获取状态信息
-func (t *TradingLoop) GetStatus() map[string]interface{} {
+func (t *TradingLoop) GetStatus(ctx context.Context) (map[string]interface{}, error) {
+	tradingConfig, err := t.adminConfigService.GetTradingConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]interface{}{
 		"is_running":       t.isRunning,
 		"iteration":        t.iteration,
 		"start_time":       t.startTime,
 		"elapsed_hours":    time.Since(t.startTime).Hours(),
-		"symbols":          t.config.Symbols,
-		"interval_minutes": t.config.IntervalMinutes,
-	}
+		"symbols":          tradingConfig.Symbols,
+		"interval_minutes": tradingConfig.IntervalMinutes,
+	}, nil
 }
 
 // truncateString 截断字符串

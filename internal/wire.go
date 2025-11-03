@@ -33,6 +33,9 @@ const (
 var (
 	handlerSet = wire.NewSet(
 		handler.NewTradingHandler,
+		handler.NewAdminHandler,
+		handler.NewAuthHandler,
+		handler.NewSetupHandler,
 	)
 
 	tradingSet = wire.NewSet(
@@ -41,6 +44,9 @@ var (
 		provideOpenAIClient,
 		repo.NewTradeRepo,
 		repo.NewOrderRepo,
+		repo.NewTradingConfigRepo,
+		repo.NewSystemPromptRepo,
+		repo.NewAdminUserRepo,
 		service.NewIndicatorService,
 		service.NewMarketService,
 		service.NewTradingAccountService,
@@ -48,6 +54,9 @@ var (
 		service.NewPromptService,
 		service.NewAgentService,
 		service.NewTradingLoop,
+		service.NewAdminConfigService,
+		service.NewAuthService,
+		provideJWTSecret,
 	)
 )
 
@@ -150,4 +159,13 @@ func provideOpenAIClient(conf *config.Config, logger *zap.Logger) *openai.Client
 		zap.String("provider", openaiProviderName),
 	)
 	return &client
+}
+
+// provideJWTSecret provides JWT secret from configuration
+func provideJWTSecret(conf *config.Config) string {
+	return conf.Admin.JWTSecret
+}
+
+func provideModel(conf *config.Config) string {
+	return conf.LLM.Model
 }

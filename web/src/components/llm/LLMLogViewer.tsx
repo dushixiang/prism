@@ -116,12 +116,11 @@ export const LLMLogViewer = ({decisionId}: LLMLogViewerProps) => {
                                             <div className="space-y-3">
                                                 {(() => {
                                                     // 检查是否有实际内容
-                                                    const hasSystemPrompt = log.round_number === 1 && log.system_prompt;
                                                     const hasUserPrompt = log.round_number === 1 && log.user_prompt;
                                                     const hasAssistantContent = log.assistant_content && log.assistant_content.trim();
                                                     const hasToolCalls = log.tool_calls && log.tool_calls !== '[]';
                                                     const hasToolResponses = log.tool_responses && log.tool_responses !== '[]';
-                                                    const hasContent = hasSystemPrompt || hasUserPrompt || hasAssistantContent || hasToolCalls || hasToolResponses;
+                                                    const hasContent = hasUserPrompt || hasAssistantContent || hasToolCalls || hasToolResponses;
 
                                                     if (!hasContent && !log.error) {
                                                         return (
@@ -137,39 +136,6 @@ export const LLMLogViewer = ({decisionId}: LLMLogViewerProps) => {
 
                                                     return null;
                                                 })()}
-
-                                                {/* 系统提示词 */}
-                                                {log.round_number === 1 && log.system_prompt && (
-                                                    <div>
-                                                        <div className="mb-2 flex items-center justify-between">
-                                                            <div className="text-xs font-semibold text-slate-700">系统提示词</div>
-                                                            <button
-                                                                onClick={() => handleCopy(log.system_prompt, `system-${log.id}`)}
-                                                                className="flex items-center gap-1 rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
-                                                            >
-                                                                {copiedId === `system-${log.id}` ? (
-                                                                    <>
-                                                                        <Check className="h-3 w-3" />
-                                                                        <span>已复制</span>
-                                                                    </>
-                                                                ) : (
-                                                                    <>
-                                                                        <Copy className="h-3 w-3" />
-                                                                        <span>复制</span>
-                                                                    </>
-                                                                )}
-                                                            </button>
-                                                        </div>
-                                                        <details className="group">
-                                                            <summary className="cursor-pointer text-xs text-blue-600 hover:text-blue-800">
-                                                                点击展开查看 ({log.system_prompt.length} 字符)
-                                                            </summary>
-                                                            <div className="mt-2 max-h-60 overflow-y-auto whitespace-pre-wrap rounded bg-slate-100 p-3 text-xs text-slate-700">
-                                                                {log.system_prompt}
-                                                            </div>
-                                                        </details>
-                                                    </div>
-                                                )}
 
                                                 {/* 用户提示词 */}
                                                 {log.round_number === 1 && log.user_prompt && (
