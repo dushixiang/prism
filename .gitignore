@@ -10,3 +10,4 @@ config.json
 .DS_Store
 bin/
 tmp/
+**/*.lock
