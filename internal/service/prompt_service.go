@@ -680,6 +680,7 @@ func (s *PromptService) GetSystemInstructions(ctx context.Context) (string, erro
 		"max_positions":        fmt.Sprintf("%d", tradingConfig.MaxPositions),
 		"min_leverage":         fmt.Sprintf("%d", tradingConfig.MinLeverage),
 		"max_leverage":         fmt.Sprintf("%d", tradingConfig.MaxLeverage),
+		"interval_minutes":     fmt.Sprintf("%d", tradingConfig.IntervalMinutes),
 	}
 
 	tmpl := fasttemplate.New(prompt.Content, "{{", "}}")
