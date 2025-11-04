@@ -604,9 +604,9 @@ func formatVolume(vol float64) string {
 // translateStatus 将英文状态关键字翻译为更具可读性的中文
 func translateStatus(status, v1, v2, above, below, equal string) string {
 	switch status {
-	case "above":
+	case "above", "higher":
 		return fmt.Sprintf("%s %s %s", v1, above, v2)
-	case "below":
+	case "below", "lower":
 		return fmt.Sprintf("%s %s %s", v1, below, v2)
 	case "equal":
 		return fmt.Sprintf("%s %s %s", v1, equal, v2)

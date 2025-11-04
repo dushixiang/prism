@@ -80,6 +80,8 @@ func (h *TradingHandler) GetStatus(c echo.Context) error {
 			"opened_at":      pos.OpenedAt,
 			"entry_reason":   pos.EntryReason,
 			"exit_plan":      pos.ExitPlan,
+			"stop_loss":      pos.StopLoss,
+			"take_profit":    pos.TakeProfit,
 		})
 	}
 
@@ -154,6 +156,8 @@ func (h *TradingHandler) GetPositions(c echo.Context) error {
 			"opened_at":         pos.OpenedAt,
 			"entry_reason":      pos.EntryReason,
 			"exit_plan":         pos.ExitPlan,
+			"stop_loss":         pos.StopLoss,
+			"take_profit":       pos.TakeProfit,
 		})
 	}
 

@@ -38,6 +38,8 @@ export type Position = {
     warnings?: string[];
     entry_reason?: string;
     exit_plan?: string;
+    stop_loss?: number;
+    take_profit?: number;
 };
 
 export type Decision = {

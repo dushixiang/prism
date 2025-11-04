@@ -58,6 +58,20 @@ export const PositionsList = ({positions, isLoading, error}: PositionsListProps)
                                 <span
                                     className="font-mono">{formatPrice(position.current_price, 4)}</span>
                             </div>
+                            {position.stop_loss && position.stop_loss > 0 && (
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">止损价格:</span>
+                                    <span
+                                        className="font-mono text-rose-600">{formatPrice(position.stop_loss, 4)}</span>
+                                </div>
+                            )}
+                            {position.take_profit && position.take_profit > 0 && (
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">止盈价格:</span>
+                                    <span
+                                        className="font-mono text-emerald-600">{formatPrice(position.take_profit, 4)}</span>
+                                </div>
+                            )}
                             {position.liquidation_price && position.liquidation_price > 0 && (
                                 <div className="flex justify-between">
                                     <span className="text-slate-500">强平价格:</span>

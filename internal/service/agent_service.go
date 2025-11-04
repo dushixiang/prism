@@ -775,6 +775,14 @@ func (s *AgentService) toolClosePosition(ctx context.Context, args map[string]in
 		s.logger.Error("failed to save trade", zap.Error(err))
 	}
 
+	// 取消该持仓的所有止损止盈订单
+	if err := s.cancelPositionStopOrders(ctx, targetPosition.ID, symbol); err != nil {
+		s.logger.Error("failed to cancel position stop orders",
+			zap.String("position_id", targetPosition.ID),
+			zap.Error(err))
+		// 不阻止继续执行
+	}
+
 	if err := s.positionService.DeletePosition(ctx, targetPosition.ID); err != nil {
 		s.logger.Error("failed to delete position", zap.Error(err))
 	}
@@ -1319,6 +1327,61 @@ func containsAnyKeyword(text string, keywords []string) bool {
 		}
 	}
 	return false
+}
+
+// cancelPositionStopOrders 取消指定持仓的所有止损止盈订单
+func (s *AgentService) cancelPositionStopOrders(ctx context.Context, positionID, symbol string) error {
+	// 获取该持仓的所有活跃订单
+	activeOrders, err := s.OrderRepo.FindByPositionID(ctx, positionID)
+	if err != nil {
+		return fmt.Errorf("failed to get orders for position: %w", err)
+	}
+
+	if len(activeOrders) == 0 {
+		return nil
+	}
+
+	s.logger.Info("cancelling stop orders for closed position",
+		zap.String("position_id", positionID),
+		zap.String("symbol", symbol),
+		zap.Int("order_count", len(activeOrders)))
+
+	// 逐个取消订单
+	for i := range activeOrders {
+		order := &activeOrders[i]
+
+		// 只处理活跃订单
+		if !order.IsActive() {
+			continue
+		}
+
+		// 解析交易所订单ID
+		var exchangeOrderID = cast.ToInt64(order.ExchangeID)
+		if exchangeOrderID > 0 {
+			// 从交易所取消订单
+			if err := s.exchange.CancelOrder(ctx, symbol, exchangeOrderID); err != nil {
+				s.logger.Warn("failed to cancel order on exchange",
+					zap.String("symbol", symbol),
+					zap.String("order_id", order.ExchangeID),
+					zap.String("order_type", string(order.OrderType)),
+					zap.Error(err))
+			} else {
+				s.logger.Info("cancelled order on exchange",
+					zap.String("symbol", symbol),
+					zap.String("order_type", string(order.OrderType)),
+					zap.String("order_id", order.ExchangeID))
+			}
+		}
+
+		// 更新数据库订单状态为已取消
+		if err := s.OrderRepo.UpdateStatus(ctx, order.ID, models.OrderStatusCanceled); err != nil {
+			s.logger.Error("failed to update order status to canceled",
+				zap.String("order_id", order.ID),
+				zap.Error(err))
+		}
+	}
+
+	return nil
 }
 
 // saveLLMLog 保存LLM通信日志

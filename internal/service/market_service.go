@@ -47,7 +47,7 @@ type MarketData struct {
 // LongerTermContext 更长期上下文（1小时级别）
 type LongerTermContext struct {
 	EMA20vsEMA50 string    `json:"ema20_vs_ema50"` // "above" or "below"
-	ATR3vsATR14  string    `json:"atr3_vs_atr14"`  // "above" or "below"
+	ATR3vsATR14  string    `json:"atr3_vs_atr14"`  // "higher" or "lower"
 	VolumeVsAvg  string    `json:"volume_vs_avg"`  // "above" or "below"
 	MACDSeries   []float64 `json:"macd_series"`    // 最近10个MACD值
 	RSI14Series  []float64 `json:"rsi14_series"`   // 最近10个RSI14值
