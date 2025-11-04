@@ -8,7 +8,7 @@ import (
 
 // SystemPrompt 系统提示词版本记录
 type SystemPrompt struct {
-	ID        string    `json:"id"`
+	ID        string    `gorm:"primaryKey;type:varchar(36)" json:"id"`
 	Version   int       `json:"version"`
 	Content   string    `json:"content"`
 	IsActive  bool      `json:"is_active"`
@@ -23,7 +23,7 @@ func (SystemPrompt) TableName() string {
 
 // TradingConfig 交易参数配置
 type TradingConfig struct {
-	ID                 string                      `json:"id"`
+	ID                 string                      `gorm:"primaryKey;type:varchar(36)" json:"id"`
 	Symbols            datatypes.JSONSlice[string] `json:"symbols"`
 	IntervalMinutes    int                         `json:"interval_minutes"`
 	MaxDrawdownPercent float64                     `json:"max_drawdown_percent"`

@@ -24,18 +24,18 @@ const (
 	OrderStatusFailed    OrderStatus = "failed"    // 失败
 )
 
-// Order 限价订单（止损/止盈）
+// Order 限价订单(止损/止盈)
 type Order struct {
-	ID           string         `gorm:"primaryKey;type:varchar(26)" json:"id"`
-	Symbol       string         `gorm:"type:varchar(20);not null;index" json:"symbol"`            // 交易对
-	PositionID   string         `gorm:"type:varchar(26);not null;index" json:"position_id"`       // 关联的持仓ID
-	PositionSide string         `gorm:"type:varchar(10);not null" json:"position_side"`           // 持仓方向 (long/short)
-	OrderType    OrderType      `gorm:"type:varchar(20);not null" json:"order_type"`              // 订单类型 (stop_loss/take_profit)
-	TriggerPrice float64        `gorm:"type:decimal(20,8);not null" json:"trigger_price"`         // 触发价格
-	Quantity     float64        `gorm:"type:decimal(20,8);not null" json:"quantity"`              // 订单数量
-	ExchangeID   string         `gorm:"type:varchar(50)" json:"exchange_id"`                      // 交易所订单ID
-	Status       OrderStatus    `gorm:"type:varchar(20);not null;default:'active'" json:"status"` // 订单状态
-	Reason       string         `gorm:"type:text" json:"reason"`                                  // 创建/更新原因
+	ID           string         `gorm:"primaryKey;type:varchar(36)" json:"id"`
+	Symbol       string         `gorm:"not null;index" json:"symbol"`            // 交易对
+	PositionID   string         `gorm:"not null;index" json:"position_id"`       // 关联的持仓ID
+	PositionSide string         `gorm:"not null" json:"position_side"`           // 持仓方向 (long/short)
+	OrderType    OrderType      `gorm:"not null" json:"order_type"`              // 订单类型 (stop_loss/take_profit)
+	TriggerPrice float64        `gorm:"not null" json:"trigger_price"`           // 触发价格
+	Quantity     float64        `gorm:"not null" json:"quantity"`                // 订单数量
+	ExchangeID   string         `json:"exchange_id"`                             // 交易所订单ID
+	Status       OrderStatus    `gorm:"not null;default:'active'" json:"status"` // 订单状态
+	Reason       string         `json:"reason"`                                  // 创建/更新原因
 	CreatedAt    time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt    time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 	TriggeredAt  *time.Time     `json:"triggered_at,omitempty"` // 触发时间
